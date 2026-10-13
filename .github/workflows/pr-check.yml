@@ -140,7 +140,7 @@ jobs:
           ssh-keyscan -t ed25519,rsa github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null
           export GIT_SSH_COMMAND="ssh -i $key_file -o IdentitiesOnly=yes"
           git init src
-          git -C src remote add origin git@github.com:subunit-ai/subunit-scai.git
+          git -C src remote add origin git@github.com:Subunit-UG/scai-app.git
           git -C src fetch --depth 1 -- origin "$SRC_REF"
           git -C src checkout --detach FETCH_HEAD
           ACTUAL_SHA=$(git -C src rev-parse HEAD)
@@ -1539,7 +1539,7 @@ jobs:
           ssh-keyscan -t ed25519,rsa github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null
           export GIT_SSH_COMMAND="ssh -i $key_file -o IdentitiesOnly=yes"
           git init src
-          git -C src remote add origin git@github.com:subunit-ai/subunit-scai.git
+          git -C src remote add origin git@github.com:Subunit-UG/scai-app.git
           git -C src fetch --depth 1 -- origin "$SRC_REF"
           git -C src checkout --detach FETCH_HEAD
           ACTUAL_SHA=$(git -C src rev-parse HEAD)

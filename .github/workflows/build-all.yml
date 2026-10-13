@@ -170,7 +170,7 @@ jobs:
           # bytes on every runner; platform packaging handles native formats.
           git -C src config core.autocrlf false
           git -C src config core.eol lf
-          git -C src remote add origin git@github.com:subunit-ai/subunit-scai.git
+          git -C src remote add origin git@github.com:Subunit-UG/scai-app.git
           git -C src fetch --depth 1 origin "$SOURCE_SHA"
           git -C src checkout --detach FETCH_HEAD
           ACTUAL_SHA=$(git -C src rev-parse HEAD)
@@ -332,7 +332,7 @@ jobs:
           git init src
           git -C src config core.autocrlf false
           git -C src config core.eol lf
-          git -C src remote add origin git@github.com:subunit-ai/subunit-scai.git
+          git -C src remote add origin git@github.com:Subunit-UG/scai-app.git
           git -C src fetch --depth 1 origin "$SOURCE_SHA"
           git -C src checkout --detach FETCH_HEAD
           ACTUAL_SHA=$(git -C src rev-parse HEAD)
@@ -939,7 +939,7 @@ jobs:
           git init src
           git -C src config core.autocrlf false
           git -C src config core.eol lf
-          git -C src remote add origin git@github.com:subunit-ai/subunit-scai.git
+          git -C src remote add origin git@github.com:Subunit-UG/scai-app.git
           git -C src fetch --depth 1 origin "$SOURCE_SHA"
           git -C src checkout --detach FETCH_HEAD
           test "$(git -C src rev-parse HEAD)" = "$SOURCE_SHA"
@@ -1209,7 +1209,7 @@ jobs:
           printf '%s\n' "$SOURCE_DEPLOY_KEY" > "$key_file"
           chmod 600 "$key_file"
           export GIT_SSH_COMMAND="ssh -i $key_file -o IdentitiesOnly=yes"
-          SOURCE_REPO=git@github.com:subunit-ai/subunit-scai.git
+          SOURCE_REPO=git@github.com:Subunit-UG/scai-app.git
           REMOTE_MAIN=$(git ls-remote "$SOURCE_REPO" refs/heads/main | awk '{print $1}')
           REMOTE_TAG=$(git ls-remote "$SOURCE_REPO" "refs/tags/$TAG^{}" | awk '{print $1}')
           if [ -z "$REMOTE_TAG" ]; then
