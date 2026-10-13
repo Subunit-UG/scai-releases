@@ -14,6 +14,11 @@ on:
         description: "Vollstaendiger Atlas Commit-SHA"
         required: true
         type: string
+      diagnostic_public_key_base64:
+        description: "Optionaler einmaliger RSA-3072+-Public-Key fuer versiegelte private Testfehler"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -102,10 +107,22 @@ jobs:
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" atlas-api-dependency-security bun run security:dependencies
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" atlas-api-typecheck bun run typecheck
       - name: Migrationen und isolierte PostgreSQL-Suite
+        id: api_tests
+        env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/atlas-api-diagnostic.json', runner.temp) || '' }}
         working-directory: private/atlas/atlas-api
         run: |
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" atlas-api-migrations bash -c 'bun run migrate && bun run migrate'
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" atlas-api-tests bun test --isolate
+      - name: Verschluesselte Atlas-Testdiagnose bereitstellen
+        if: failure() && steps.api_tests.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: atlas-api-encrypted-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/atlas-api-diagnostic.json
+          if-no-files-found: error
+          retention-days: 1
       - name: Restore-, Trust- und Dirty-Document-Proofs
         working-directory: private/atlas/atlas-api
         env:
