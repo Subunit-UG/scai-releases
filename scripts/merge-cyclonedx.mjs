@@ -71,7 +71,7 @@ export function mergeCycloneDx(nodeBom, rustBom, { name, version, sourceSha, tim
         version,
         "bom-ref": rootRef,
         properties: [
-          { name: "subunit:source_repository", value: "https://github.com/subunit-ai/subunit-scai" },
+          { name: "subunit:source_repository", value: "https://github.com/Subunit-UG/scai-app" },
           { name: "subunit:source_sha", value: sourceSha },
         ],
       },
