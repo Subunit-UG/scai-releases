@@ -1353,3 +1353,14 @@ test('Sonar-Policy bindet auch die ausgeführten Helfer an den geprüften Vertra
     assert.ok(validateSonarHelpers({ ...helpers, [name]: helpers[name].replace(before, after) }).some(e => e.includes(name)));
   }
 });
+
+test('Atlas diagnostics remain encrypted and bound to the exact failed suite',()=>{
+ for(const [label,mutate] of [
+  ['raw source upload',s=>s.replace('path: ${{ runner.temp }}/atlas-api-diagnostic.json','path: private/atlas/**')],
+  ['unconditional upload',s=>s.replace("if: failure() && steps.api_tests.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''",'if: always()')],
+  ['recipient removed',s=>s.replace('SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}','SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ""')],
+  ['suite filter',s=>s.replace('atlas-api-tests bun test --isolate','atlas-api-tests bun test --isolate --test-name-pattern docs')],
+ ]){
+  const changed={...fixtures,'atlas-pr-check.yml':mutate(fixtures['atlas-pr-check.yml'])};assert.notEqual(validateSourceConfidentiality(changed,assetSelector).length,0,label);
+ }
+});
