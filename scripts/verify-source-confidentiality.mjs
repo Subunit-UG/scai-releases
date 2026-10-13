@@ -882,10 +882,13 @@ export function validateSourceConfidentiality(workflows, assetSelector) {
   require(authArtifacts.length === 1 && /^\s+path: \$\{\{ runner.temp \}\}\/auth-diagnostic\.json$/m.test(authArtifacts[0]?.[0] ?? ""), "auth-pr-check.yml: artifacts must contain only the encrypted diagnostic envelope");
 
   const atlas = workflows["atlas-pr-check.yml"] ?? "";
+  const atlasTestSteps = atlas.split("\n      - name:").filter(step=>step.includes("id: api_tests"));
+  require(atlasTestSteps.length === 1 && atlasTestSteps[0].includes("SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}") && atlasTestSteps[0].includes("SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/atlas-api-diagnostic.json', runner.temp) || '' }}"), "atlas-pr-check.yml: recipient and encrypted path must be bound to the exact test step");
   const atlasArtifacts = [...atlas.matchAll(/uses:\s*actions\/upload-artifact@[0-9a-f]{40}[^]*?(?=\n      - name:|$)/g)];
   require(atlas.includes("SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}") && atlas.includes("format('{0}/atlas-api-diagnostic.json', runner.temp)"), "atlas-pr-check.yml: diagnostics must use the optional one-time public-key envelope");
   require(atlas.includes("if: failure() && steps.api_tests.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''"), "atlas-pr-check.yml: encrypted upload requires the exact failed test step and supplied recipient");
   require(atlasArtifacts.length === 1 && /^\s+path: \$\{\{ runner.temp \}\}\/atlas-api-diagnostic\.json$/m.test(atlasArtifacts[0]?.[0] ?? ""), "atlas-pr-check.yml: only the encrypted diagnostic envelope may be uploaded");
+  require(/^\s+if-no-files-found: error$/m.test(atlasArtifacts[0]?.[0] ?? "") && /^\s+retention-days: 1$/m.test(atlasArtifacts[0]?.[0] ?? ""), "atlas-pr-check.yml: diagnostic must fail closed on missing envelope and expire after one day");
   const atlasSuiteCommands = atlas.split("\n").map(line=>line.trim()).filter(line=>line.includes("run-confidential.sh") && line.includes("atlas-api-tests"));
   require(atlasSuiteCommands.length === 1 && atlasSuiteCommands[0] === 'bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" atlas-api-tests bun test --isolate', "atlas-pr-check.yml: full isolated suite must remain confidential and unfiltered");
 
