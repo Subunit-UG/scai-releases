@@ -118,7 +118,9 @@ export function validateRadarBundle(bundle,source,request) {
   }
   return true;
 }
-export function runCommand(command,args,options,timeoutMs=20*60*1000) {
+// Die Radar-Browsermatrix (Gebiete: 12 Fälle, ~1.900 Prüfungen) braucht seit den 3D-Städten
+// lokal schon ~19 min; 20 min pro Befehl reichten auf CI-Runnern nicht mehr (Exit 124).
+export function runCommand(command,args,options,timeoutMs=40*60*1000) {
   return new Promise((resolve,reject)=>{
     const child=spawn(command,args,{...options,detached:true});let timedOut=false;
     const kill=()=>{try{process.kill(-child.pid,'SIGKILL');}catch(error){if(error.code!=='ESRCH')throw error;}};
