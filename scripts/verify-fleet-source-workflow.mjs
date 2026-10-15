@@ -81,7 +81,7 @@ export function validateFleetSourceWorkflow(workflow, checkoutHelper) {
 
   require(checkoutHelper.includes("^[0-9a-f]{40}$"), "checkout helper must reject mutable/non-SHA refs");
   require(checkoutHelper.includes('fetch --depth 1 origin "$source_sha"'), "checkout helper must fetch the exact requested SHA");
-  require(checkoutHelper.includes("checkout --detach FETCH_HEAD"), "checkout helper must detach at FETCH_HEAD");
+  require(checkoutHelper.includes('checkout --detach "$source_sha"'), "checkout helper must detach at the exact requested SHA");
   require(checkoutHelper.includes('if [ "$actual_sha" != "$source_sha" ]'), "checkout helper must reject checkout drift");
   require(checkoutHelper.includes("IdentitiesOnly=yes"), "checkout helper must constrain SSH identities");
   require(checkoutHelper.includes("StrictHostKeyChecking=yes"), "checkout helper must verify the GitHub host key");
