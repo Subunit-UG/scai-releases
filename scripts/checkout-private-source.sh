@@ -149,10 +149,13 @@ git -C "$destination" remote add origin "$source_repo"
 # Echo's deployment contracts compare an exact historical live Dockerfile.
 # Keep its ancestry, matching server-contracts.yml's fetch-depth: 0. The checked
 # out candidate is still the immutable SHA validated below; other lanes stay shallow.
-fetch_depth=(--depth 1)
-if [ "$component" = echo ]; then fetch_depth=(); fi
-bash "$script_dir/run-confidential.sh" "checkout-$component-fetch" \
-  git -C "$destination" fetch "${fetch_depth[@]}" origin "$source_sha"
+if [ "$component" = echo ]; then
+  bash "$script_dir/run-confidential.sh" "checkout-$component-fetch" \
+    git -C "$destination" fetch origin "$source_sha"
+else
+  bash "$script_dir/run-confidential.sh" "checkout-$component-fetch" \
+    git -C "$destination" fetch --depth 1 origin "$source_sha"
+fi
 if [ "$component" = echo ]; then
   # This deployed baseline is not an ancestor of the current release branch.
   # Fetch only the exact fixture pin, never a mutable branch or extra checkout.

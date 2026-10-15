@@ -196,10 +196,58 @@ fi
   assert.doesNotMatch(result.stdout + result.stderr, new RegExp(secret));
   const calls = readFileSync(gitLog, "utf8");
   assert.match(calls, new RegExp(`fetch --depth 1 origin ${SHA}`));
-  assert.match(calls, /checkout --detach FETCH_HEAD/);
+  assert.match(calls, new RegExp(`checkout --detach ${SHA}`));
   assert.match(calls, /remote remove origin/);
   assert.equal(existsSync(join(runnerTemp, "scai-u1-chat-deploy-key")), false);
   assert.equal(existsSync(join(runnerTemp, "scai-u1-chat-known-hosts")), false);
+  cleanup(testRoot);
+});
+
+test("Echo historical fixture fetch cannot replace the candidate checkout", () => {
+  const testRoot = mkdtempSync(join(tmpdir(), "scai-private-success-test-"));
+  const binDir = join(testRoot, "bin");
+  const runnerTemp = join(testRoot, "runner-temp");
+  const workspace = join(testRoot, "workspace");
+  const gitLog = join(testRoot, "git-calls.log");
+  mkdirSync(binDir);
+  mkdirSync(runnerTemp);
+  mkdirSync(workspace);
+  writeMock(binDir, "ssh-keyscan", "printf '%s\\n' 'github.com ssh-ed25519 AAAAPINNED'");
+  writeMock(binDir, "ssh-keygen", "printf '%s\\n' '256 SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU github.com (ED25519)'");
+  writeMock(binDir, "git", `
+printf '%s\\n' "$*" >> "$MOCK_GIT_LOG"
+if [ "\${1:-}" = "init" ]; then
+  mkdir -p "\${3:?}/.git"
+elif [ "\${1:-}" = "-C" ] && [ "\${3:-}" = "rev-parse" ]; then
+  printf '%s\\n' "$MOCK_SOURCE_SHA"
+fi
+`);
+
+  const secret = "PRIVATE_DEPLOY_KEY_CANARY";
+  const result = spawnSync("bash", [HELPER, "echo", "git@github.com:subunit-ai/echo.git", SHA], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      GITHUB_WORKSPACE: workspace,
+      RUNNER_TEMP: runnerTemp,
+      SOURCE_DEPLOY_KEY: secret,
+      MOCK_GIT_LOG: gitLog,
+      MOCK_SOURCE_SHA: SHA,
+      PATH: `${binDir}:${process.env.PATH}`,
+    },
+  });
+
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, new RegExp(`PASS private-checkout-echo \\(source-sha=${SHA}\\)`));
+  assert.doesNotMatch(result.stdout + result.stderr, new RegExp(secret));
+  const calls = readFileSync(gitLog, "utf8");
+  assert.match(calls, new RegExp(`fetch origin ${SHA}`));
+  assert.match(calls, /fetch --depth 1 origin 5c37154c83464b1f5a203bd4e0f1d66af9bf75d1/);
+  assert.doesNotMatch(calls, /checkout --detach FETCH_HEAD/);
+  assert.match(calls, new RegExp(`checkout --detach ${SHA}`));
+  assert.match(calls, /remote remove origin/);
+  assert.equal(existsSync(join(runnerTemp, "scai-echo-deploy-key")), false);
+  assert.equal(existsSync(join(runnerTemp, "scai-echo-known-hosts")), false);
   cleanup(testRoot);
 });
 
@@ -242,7 +290,7 @@ fi
   assert.doesNotMatch(result.stdout + result.stderr, new RegExp(secret));
   const calls = readFileSync(gitLog, "utf8");
   assert.match(calls, new RegExp(`fetch --depth 1 origin ${SHA}`));
-  assert.match(calls, /checkout --detach FETCH_HEAD/);
+  assert.match(calls, new RegExp(`checkout --detach ${SHA}`));
   assert.match(calls, /remote remove origin/);
   assert.equal(existsSync(join(runnerTemp, "scai-u1-chat-deploy-key")), false);
   assert.equal(existsSync(join(runnerTemp, "scai-u1-chat-known-hosts")), false);
