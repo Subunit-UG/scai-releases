@@ -153,8 +153,14 @@ fetch_depth=(--depth 1)
 if [ "$component" = echo ]; then fetch_depth=(); fi
 bash "$script_dir/run-confidential.sh" "checkout-$component-fetch" \
   git -C "$destination" fetch "${fetch_depth[@]}" origin "$source_sha"
+if [ "$component" = echo ]; then
+  # This deployed baseline is not an ancestor of the current release branch.
+  # Fetch only the exact fixture pin, never a mutable branch or extra checkout.
+  bash "$script_dir/run-confidential.sh" "checkout-echo-deploy-fixture" \
+    git -C "$destination" fetch --depth 1 origin 5c37154c83464b1f5a203bd4e0f1d66af9bf75d1
+fi
 bash "$script_dir/run-confidential.sh" "checkout-$component-detach" \
-  git -C "$destination" checkout --detach FETCH_HEAD
+  git -C "$destination" checkout --detach "$source_sha"
 
 actual_sha=$(git -C "$destination" rev-parse HEAD)
 if [ "$actual_sha" != "$source_sha" ]; then
