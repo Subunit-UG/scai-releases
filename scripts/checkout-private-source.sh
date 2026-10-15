@@ -146,8 +146,13 @@ if [ "$windows" = true ]; then
   git -C "$destination" config core.eol lf
 fi
 git -C "$destination" remote add origin "$source_repo"
+# Echo's deployment contracts compare an exact historical live Dockerfile.
+# Keep its ancestry, matching server-contracts.yml's fetch-depth: 0. The checked
+# out candidate is still the immutable SHA validated below; other lanes stay shallow.
+fetch_depth=(--depth 1)
+if [ "$component" = echo ]; then fetch_depth=(); fi
 bash "$script_dir/run-confidential.sh" "checkout-$component-fetch" \
-  git -C "$destination" fetch --depth 1 origin "$source_sha"
+  git -C "$destination" fetch "${fetch_depth[@]}" origin "$source_sha"
 bash "$script_dir/run-confidential.sh" "checkout-$component-detach" \
   git -C "$destination" checkout --detach FETCH_HEAD
 
