@@ -46,7 +46,7 @@ jobs:
       - name: Gepinntes Python einrichten
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5, immutable
         with:
-          python-version: "3.12"
+          python-version: "3.10"
 
       - name: Echo exakt und read-only auschecken
         env:
@@ -55,7 +55,18 @@ jobs:
 
       - name: Testabhaengigkeiten installieren
         working-directory: private/echo
-        run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" echo-install python -m pip install numpy==1.26.4 cryptography==42.0.5
+        # Keep the fallback runner aligned with the private server-contracts
+        # workflow: JWT/HTTP/API tests must run, not fail on missing imports.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" echo-install \
+            python -m pip install -c server/runtime-security-constraints.txt \
+            "numpy==1.26.4" "cryptography==50.0.2" "pyOpenSSL==26.4.0" \
+            "fastapi==0.136.3" "pydantic[email]==2.13.4" "httpx==0.28.1" \
+            "python-multipart==0.0.29" "PyJWT==2.13.0" "requests==2.33.0" \
+            "soundfile==0.14.0" "anyio==4.14.2" "starlette==1.3.1" \
+            "typing_extensions==4.16.0"
 
       - name: Python-Syntax und vollstaendige Server-Suite
         working-directory: private/echo

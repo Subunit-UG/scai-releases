@@ -146,10 +146,24 @@ if [ "$windows" = true ]; then
   git -C "$destination" config core.eol lf
 fi
 git -C "$destination" remote add origin "$source_repo"
-bash "$script_dir/run-confidential.sh" "checkout-$component-fetch" \
-  git -C "$destination" fetch --depth 1 origin "$source_sha"
+# Echo's deployment contracts compare an exact historical live Dockerfile.
+# Keep its ancestry, matching server-contracts.yml's fetch-depth: 0. The checked
+# out candidate is still the immutable SHA validated below; other lanes stay shallow.
+if [ "$component" = echo ]; then
+  bash "$script_dir/run-confidential.sh" "checkout-$component-fetch" \
+    git -C "$destination" fetch origin "$source_sha"
+else
+  bash "$script_dir/run-confidential.sh" "checkout-$component-fetch" \
+    git -C "$destination" fetch --depth 1 origin "$source_sha"
+fi
+if [ "$component" = echo ]; then
+  # This deployed baseline is not an ancestor of the current release branch.
+  # Fetch only the exact fixture pin, never a mutable branch or extra checkout.
+  bash "$script_dir/run-confidential.sh" "checkout-echo-deploy-fixture" \
+    git -C "$destination" fetch --depth 1 origin 5c37154c83464b1f5a203bd4e0f1d66af9bf75d1
+fi
 bash "$script_dir/run-confidential.sh" "checkout-$component-detach" \
-  git -C "$destination" checkout --detach FETCH_HEAD
+  git -C "$destination" checkout --detach "$source_sha"
 
 actual_sha=$(git -C "$destination" rev-parse HEAD)
 if [ "$actual_sha" != "$source_sha" ]; then

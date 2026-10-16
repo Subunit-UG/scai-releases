@@ -56,6 +56,9 @@ test("new raw steps or actions cannot run while private source is present", () =
 });
 
 test("mutable checkout or missing credential cleanup is rejected", () => {
+  const fixtureHead = helper.replace('checkout --detach "$source_sha"', 'checkout --detach FETCH_HEAD');
+  assert.notEqual(fixtureHead, helper);
+  assert.match(validateFleetSourceWorkflow(workflow, fixtureHead).join("\n"), /detach at the exact requested SHA/);
   const mutable = helper.replace('fetch --depth 1 origin "$source_sha"', 'fetch --depth 1 origin main');
   assert.match(validateFleetSourceWorkflow(workflow, mutable).join("\n"), /exact requested SHA/);
   const dirty = helper.replace("trap 'exit 143' TERM", "# TERM ignored");
