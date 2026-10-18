@@ -48,6 +48,9 @@ export function validateReleaseWorkflow(workflow) {
   const has = (pattern) => pattern.test(workflow);
 
   require(!has(/grep -Fq "(?:Source-SHA|Fleet-Release-ID|Distribution-Policy):/), "draft identity checks must match complete binding lines");
+  // Meet Windows ARM64: Objekt-Audit muss vor jedem Installer-Upload unabhängig geprüft werden.
+  require(has(/id: meet-python\s*\n\s*uses: actions\/setup-python@[0-9a-f]{40}/), "Meet ARM64 audit needs a pinned Python setup");
+  require(has(/if \[ "\$TARGET" = "aarch64-pc-windows-msvc" \]; then\s*\n[\s\S]{0,400}?verify-meet-arm64-audit\.py/), "Meet ARM64 audit verifier must run for the Windows ARM64 target");
 
   require(has(/source_sha:\s*\n(?:\s+.*\n){0,4}?\s+required:\s*true/m), "source_sha input must be required");
   require(has(/release_id:\s*\n(?:\s+.*\n){0,4}?\s+required:\s*true/m), "release_id input must be required");

@@ -351,6 +351,17 @@ jobs:
           cache: npm
           cache-dependency-path: src/package-lock.json
 
+      # Der Meet-ARM64-Audit (CMake-Objektprüfung und Verifier vor dem Upload)
+      # braucht Python >= 3.11 (hashlib.file_digest). Auf windows-11-arm ist
+      # python3 in Git Bash nicht zugesichert: deshalb fest einrichten.
+      - name: Python für den Meet-ARM64-Audit einrichten
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        id: meet-python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0, immutable pin
+        with:
+          python-version: '3.12'
+          architecture: arm64
+
       # Nur der Windows-Job faehrt den indizierten Broker-Beweis, und dessen
       # Pruefung "TypeScript-Broker-Policytests" startet bun als Unterprozess.
       # Ohne bun fehlte die Pruefung ihr Werkzeug und der Beweis meldete nur
@@ -631,8 +642,21 @@ jobs:
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" "product-binary-$TARGET" \
             node "$GITHUB_WORKSPACE/gate/scripts/verify-product-binary.mjs" src-tauri/Cargo.toml
 
+          MEET_BUILD_START=$(date +%s)
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" "tauri-build-$TARGET" \
             npm run tauri build -- "${BUILD_ARGS[@]}"
+
+          # Independent of the CMake hook and ENABLE_MEET: missing policy/audit
+          # must fail before any installer is uploaded. Never print private
+          # paths, objects, disassembly or source-bearing build output.
+          if [ "$TARGET" = "aarch64-pc-windows-msvc" ]; then
+            MEET_PYTHON='${{ steps.meet-python.outputs.python-path }}'
+            [ -n "$MEET_PYTHON" ] || { echo "::error::Python für den Meet-ARM64-Audit fehlt"; exit 1; }
+            MEET_PYTHON=$(cygpath -u "$MEET_PYTHON")
+            "$MEET_PYTHON" "$GITHUB_WORKSPACE/gate/scripts/verify-meet-arm64-audit.py" \
+              --build-root "src-tauri/target/$TARGET/release/build" \
+              --scanner scripts/meet/scan_arm64.py --build-start "$MEET_BUILD_START"
+          fi
 
           BUNDLE_ROOT="src-tauri/target/$TARGET/release/bundle"
           case "$TARGET" in
