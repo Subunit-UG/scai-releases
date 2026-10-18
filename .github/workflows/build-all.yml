@@ -631,8 +631,18 @@ jobs:
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" "product-binary-$TARGET" \
             node "$GITHUB_WORKSPACE/gate/scripts/verify-product-binary.mjs" src-tauri/Cargo.toml
 
+          MEET_BUILD_START=$(date +%s)
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" "tauri-build-$TARGET" \
             npm run tauri build -- "${BUILD_ARGS[@]}"
+
+          # Independent of the CMake hook and ENABLE_MEET: missing policy/audit
+          # must fail before any installer is uploaded. Never print private
+          # paths, objects, disassembly or source-bearing build output.
+          if [ "$TARGET" = "aarch64-pc-windows-msvc" ]; then
+            python3 "$GITHUB_WORKSPACE/gate/scripts/verify-meet-arm64-audit.py" \
+              --build-root "src-tauri/target/$TARGET/release/build" \
+              --scanner scripts/meet/scan_arm64.py --build-start "$MEET_BUILD_START"
+          fi
 
           BUNDLE_ROOT="src-tauri/target/$TARGET/release/bundle"
           case "$TARGET" in
