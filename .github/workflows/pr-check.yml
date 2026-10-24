@@ -1140,7 +1140,9 @@ jobs:
           test -s "$WORKSPACE_TABS_PROOF_DIR/mobile-light-areas.png"
           test -s "$WORKSPACE_TABS_PROOF_DIR/mobile-dark.png"
           test -s "$HOME/.cache/u1-shots/scai-workspace-app-plugins/dashboard-two-instances.png"
-          test -s "$HOME/.cache/u1-shots/scai-workspace-app-plugins/halo-two-instances.png"
+          # Ab SCAI 0.197.0 takoru-…; halo-… nur für Quellstände vor #671.
+          test -s "$HOME/.cache/u1-shots/scai-workspace-app-plugins/takoru-two-instances.png" \
+            || test -s "$HOME/.cache/u1-shots/scai-workspace-app-plugins/halo-two-instances.png"
           test -s "$HOME/.cache/u1-shots/scai-workspace-app-plugins/native-menu-bridge.png"
 
       # Rust-Kompilat + Unit-Tests. Tauri v2 linkt webkit2gtk/gtk auch für
@@ -1179,7 +1181,7 @@ jobs:
             "https://github.com/subunit-ai/trace-tauri.git"
           echo "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> "$GITHUB_ENV"
 
-      - name: cargo test (Sidecar-Trust-Modell + halo + verify-Suite)
+      - name: cargo test (Sidecar-Trust-Modell + Takoru + verify-Suite)
         id: cargo_test
         working-directory: src
         shell: bash
