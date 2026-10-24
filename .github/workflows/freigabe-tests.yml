@@ -1,0 +1,41 @@
+# Freigabe-Tests: volle Testsuite bei JEDEM PR auf main, ohne Pfadfilter (TJ 2026-10-24).
+# Läuft unter pull_request (Cache-Bereich des PR-Branches, Lesetoken, keine Secrets).
+# Ihr grüner Check-Run "Volle Testsuite" ist Pflicht-Check auf main und Voraussetzung
+# für die automatische Freigabe (auto-freigabe.yml).
+
+name: Freigabe-Tests
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: freigabe-tests-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pruefen:
+    name: Volle Testsuite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2, immutable
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4, immutable
+        with:
+          node-version: 22
+      - name: Alle Skript-Tests
+        run: node --test scripts/*.test.mjs
+      - name: Fleet-Manifeste prüfen
+        run: node scripts/verify-fleet-manifest.mjs
+      - name: Release-Workflow fail-closed prüfen
+        run: node scripts/verify-release-workflow.mjs
+      - name: Public-CI-Vertraulichkeit fail-closed prüfen
+        run: node scripts/verify-source-confidentiality.mjs
+      - name: Private Fleet-Source-CI fail-closed prüfen
+        run: node scripts/verify-fleet-source-workflow.mjs
