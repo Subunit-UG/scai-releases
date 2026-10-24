@@ -824,7 +824,7 @@ jobs:
 
       - name: Meet-Proof-Screenshots verschlüsseln (öffentliches Repo, nie Klartext)
         id: meet_seal
-        if: always() && inputs.diagnostic_public_key_base64 != ''
+        if: always() && (steps.meet_visual_proof.outcome == 'success' || steps.meet_visual_proof.outcome == 'failure') && inputs.diagnostic_public_key_base64 != ''
         continue-on-error: true
         shell: bash
         env:
@@ -832,13 +832,17 @@ jobs:
         run: |
           set -euo pipefail
           dir="$HOME/.cache/u1-shots/scai-meet-plugin/ci"
-          test -d "$dir" && find "$dir" -type f -print -quit | grep -q .
+          if [ ! -d "$dir" ] || [ -z "$(find "$dir" -type f -print -quit)" ]; then
+            echo "::notice::No Meet proof files available for encryption."
+            exit 0
+          fi
           tar -czf "$RUNNER_TEMP/scai-meet-shots.tgz" -C "$(dirname "$dir")" "$(basename "$dir")"
           node "$GITHUB_WORKSPACE/gate/scripts/encrypt-confidential-log.mjs" "$RUNNER_TEMP/scai-meet-shots.tgz" "$RUNNER_TEMP/scai-meet-encrypted-shots.json" "$SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64"
           rm -f "$RUNNER_TEMP/scai-meet-shots.tgz"
+          echo "sealed=true" >> "$GITHUB_OUTPUT"
 
       - name: Meet-Proof-Screenshots (verschlüsselt) sichern
-        if: always() && steps.meet_seal.outcome == 'success'
+        if: always() && steps.meet_seal.outcome == 'success' && steps.meet_seal.outputs.sealed == 'true'
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:

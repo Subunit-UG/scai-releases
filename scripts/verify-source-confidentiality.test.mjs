@@ -53,11 +53,11 @@ test("Meet encrypted upload requires its own failure and recipient with one-day 
 
 test("public Meet uploads are encrypted envelopes only (screenshots + failure diagnostics)", () => {
   const seal = meetStep("Meet-Proof-Screenshots verschlüsseln (öffentliches Repo, nie Klartext)");
-  assert.match(seal, /^        if: always\(\) && inputs\.diagnostic_public_key_base64 != ''$/m);
+  assert.match(seal, /^        if: always\(\) && \(steps\.meet_visual_proof\.outcome == 'success' \|\| steps\.meet_visual_proof\.outcome == 'failure'\) && inputs\.diagnostic_public_key_base64 != ''$/m);
   assert.ok(seal.includes('dir="$HOME/.cache/u1-shots/scai-meet-plugin/ci"'));
   assert.ok(seal.includes("encrypt-confidential-log.mjs"));
   const screenshots = meetStep("Meet-Proof-Screenshots (verschlüsselt) sichern");
-  assert.match(screenshots, /^        if: always\(\) && steps\.meet_seal\.outcome == 'success'$/m);
+  assert.match(screenshots, /^        if: always\(\) && steps\.meet_seal\.outcome == 'success' && steps\.meet_seal\.outputs\.sealed == 'true'$/m);
   assert.match(screenshots, /^          path: \$\{\{ runner\.temp \}\}\/scai-meet-encrypted-shots\.json$/m);
   assert.equal(screenshots.match(/^          path:/gm)?.length, 1);
   const uploads = fixtures["pr-check.yml"].split(/^      - name: /m)
