@@ -55,8 +55,6 @@ on:
 
 permissions:
   contents: write # ausschließlich Draft anlegen und Evidence-Assets hochladen
-  id-token: write # kurzlebige Sigstore-Identität für GitHub Artifact Attestations
-  attestations: write
 
 # Ein gemeinsamer Lock mit publish-approved.yml schützt den Release-Datensatz über
 # den gesamten Build. Bewusst repo-weit statt nur pro Release-ID: Die Version wird
@@ -96,9 +94,22 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARIZE_METHOD: ${{ vars.APPLE_NOTARIZE_METHOD || 'apple-id' }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
           WINDOWS_CERTIFICATE_SUBJECT: ${{ secrets.WINDOWS_CERTIFICATE_SUBJECT }}
+          WINDOWS_SIGNING_BACKEND: ${{ vars.WINDOWS_SIGNING_BACKEND || 'legacy-pfx' }}
+          WINDOWS_PUBLISHER: ${{ vars.WINDOWS_PUBLISHER }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARTIFACT_SIGNING_ENDPOINT: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          ARTIFACT_SIGNING_ACCOUNT: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          ARTIFACT_SIGNING_CERTIFICATE_PROFILE: ${{ vars.ARTIFACT_SIGNING_CERTIFICATE_PROFILE }}
+          AZURE_KEY_VAULT_CERTIFICATE_URL: ${{ vars.AZURE_KEY_VAULT_CERTIFICATE_URL }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           DISTRIBUTION_POLICY: ${{ inputs.distribution_policy }}
@@ -115,6 +126,40 @@ jobs:
             WINDOWS_CERTIFICATE WINDOWS_CERTIFICATE_PASSWORD WINDOWS_CERTIFICATE_SUBJECT
             TAURI_SIGNING_PRIVATE_KEY_PASSWORD
           )
+          case "$APPLE_NOTARIZE_METHOD" in
+            apple-id) ;;
+            api-key)
+              if [ "$DISTRIBUTION_POLICY" != "market-ready" ]; then
+                echo "::error::API-Key-Notarisierung erfordert market-ready mit Developer ID Application."
+                exit 1
+              fi
+              MARKET_READY_SECRETS+=(APPLE_API_ISSUER APPLE_API_KEY APPLE_API_PRIVATE_KEY)
+              ;;
+            *) echo "::error::Unbekannte APPLE_NOTARIZE_METHOD"; exit 1 ;;
+          esac
+          CLOUD_SIGNING_SETTINGS=()
+          case "$WINDOWS_SIGNING_BACKEND" in
+            legacy-pfx) ;;
+            none)
+              if [ "$DISTRIBUTION_POLICY" = "market-ready" ]; then
+                echo "::error::WINDOWS_SIGNING_BACKEND=none ist mit market-ready unvereinbar."
+                exit 1
+              fi
+              ;;
+            artifact-signing|azure-key-vault)
+              if [ "$DISTRIBUTION_POLICY" != "market-ready" ]; then
+                echo "::error::Cloud-Signierung erfordert market-ready; legacy-v0.125 muss unsigniert bleiben."
+                exit 1
+              fi
+              CLOUD_SIGNING_SETTINGS=(AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID WINDOWS_PUBLISHER)
+              if [ "$WINDOWS_SIGNING_BACKEND" = "artifact-signing" ]; then
+                CLOUD_SIGNING_SETTINGS+=(ARTIFACT_SIGNING_ENDPOINT ARTIFACT_SIGNING_ACCOUNT ARTIFACT_SIGNING_CERTIFICATE_PROFILE)
+              else
+                CLOUD_SIGNING_SETTINGS+=(AZURE_KEY_VAULT_CERTIFICATE_URL)
+              fi
+              ;;
+            *) echo "::error::Unbekanntes WINDOWS_SIGNING_BACKEND"; exit 1 ;;
+          esac
           case "$DISTRIBUTION_POLICY" in
             market-ready)
               REQUIRED_RELEASE_SECRETS=("${BASE_RELEASE_SECRETS[@]}" "${MARKET_READY_SECRETS[@]}")
@@ -132,7 +177,15 @@ jobs:
               ;;
           esac
           MISSING_RELEASE_SECRETS=()
+          REQUIRED_RELEASE_SECRETS+=("${CLOUD_SIGNING_SETTINGS[@]}")
           for secret_name in "${REQUIRED_RELEASE_SECRETS[@]}"; do
+            # Only the explicitly selected API key replaces the historical Apple-ID group.
+            if [ "$APPLE_NOTARIZE_METHOD" = "api-key" ]; then
+              case "$secret_name" in APPLE_ID|APPLE_PASSWORD|APPLE_TEAM_ID) continue ;; esac
+            fi
+            if [ "$WINDOWS_SIGNING_BACKEND" != "legacy-pfx" ]; then
+              case "$secret_name" in WINDOWS_CERTIFICATE|WINDOWS_CERTIFICATE_PASSWORD|WINDOWS_CERTIFICATE_SUBJECT) continue ;; esac
+            fi
             if [ -z "${!secret_name:-}" ]; then
               MISSING_RELEASE_SECRETS+=("$secret_name")
             fi
@@ -254,6 +307,13 @@ jobs:
   build:
     name: ${{ matrix.label }}
     needs: release
+    # Tauri signs during bundling in this job. No OIDC access for release creation.
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      WINDOWS_SIGNING_BACKEND: ${{ vars.WINDOWS_SIGNING_BACKEND || 'legacy-pfx' }}
+      WINDOWS_PUBLISHER: ${{ vars.WINDOWS_PUBLISHER }}
     strategy:
       fail-fast: false # eine kaputte Plattform darf die anderen nicht mitreißen
       matrix:
@@ -418,7 +478,7 @@ jobs:
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" release-npm-ci npm ci
 
       - name: Windows-Code-Signing vorbereiten (OV/EV-Zertifikat + RFC-3161-Zeitstempel)
-        if: runner.os == 'Windows' && inputs.distribution_policy == 'market-ready'
+        if: runner.os == 'Windows' && inputs.distribution_policy == 'market-ready' && (vars.WINDOWS_SIGNING_BACKEND == '' || vars.WINDOWS_SIGNING_BACKEND == 'legacy-pfx')
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
@@ -460,6 +520,84 @@ jobs:
 
       # macOS-CODESIGNATUR — der Grund, warum erteilte Berechtigungen ein Update überleben.
       #
+      - name: Azure OIDC login for Windows signing
+        if: runner.os == 'Windows' && (vars.WINDOWS_SIGNING_BACKEND == 'artifact-signing' || vars.WINDOWS_SIGNING_BACKEND == 'azure-key-vault')
+        uses: azure/login@8216e11d8cd9b42fe925c852af8e76311ff067ac # v2, immutable
+        env:
+          AZURE_CORE_OUTPUT: none
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Prepare Windows cloud signing
+        id: windows-signing
+        if: runner.os == 'Windows' && (vars.WINDOWS_SIGNING_BACKEND == 'artifact-signing' || vars.WINDOWS_SIGNING_BACKEND == 'azure-key-vault')
+        shell: pwsh
+        env:
+          AZURE_KEY_VAULT_CERTIFICATE_URL: ${{ vars.AZURE_KEY_VAULT_CERTIFICATE_URL }}
+          ARTIFACT_SIGNING_ENDPOINT: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          ARTIFACT_SIGNING_ACCOUNT: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          ARTIFACT_SIGNING_CERTIFICATE_PROFILE: ${{ vars.ARTIFACT_SIGNING_CERTIFICATE_PROFILE }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_PUBLISHER)) { throw 'WINDOWS_PUBLISHER is required for cloud signing' }
+          $signing = Join-Path $env:RUNNER_TEMP 'windows-signing'
+          New-Item -ItemType Directory -Path $signing | Out-Null
+          $configPath = Join-Path $signing 'provider.json'
+          switch -CaseSensitive ($env:WINDOWS_SIGNING_BACKEND) {
+            'azure-key-vault' {
+              $relic = Join-Path $signing 'relic.exe'
+              Invoke-WebRequest 'https://github.com/sassoftware/relic/releases/download/v8.2.0/relic-windows-amd64.exe' -OutFile $relic
+              if ((Get-FileHash $relic -Algorithm SHA256).Hash.ToLowerInvariant() -ne '1411ca46a792483f200b744df9fba20bb32179d831f77264d8157f0f445a6082') { throw 'relic checksum mismatch' }
+              & $relic --version
+              if ($LASTEXITCODE -ne 0) { throw 'relic cannot start on this runner' }
+              # Empty PIN selects AzureCLICredential, using azure/login's OIDC session.
+              @{
+                tokens = @{ azure = @{ type = 'azure'; pin = '' } }
+                keys = @{ azure = @{ token = 'azure'; id = $env:AZURE_KEY_VAULT_CERTIFICATE_URL; timestamp = $true } }
+                timestamp = @{ urls = @('http://timestamp.acs.microsoft.com') }
+              } | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8NoBOM $configPath
+              "RELIC_PATH=$relic" >> $env:GITHUB_ENV
+            }
+            'artifact-signing' {
+              throw 'artifact-signing-cli 0.12.0 requires a client secret; OIDC implementation decision pending'
+            }
+            default { throw 'Unsupported cloud signing backend' }
+          }
+          "WINDOWS_SIGNING_CONFIG=$configPath" >> $env:GITHUB_ENV
+          $scriptPath = Join-Path $signing 'sign.ps1'
+          @'
+          param([Parameter(Mandatory = $true)][string] $ArtifactPath)
+          $ErrorActionPreference = 'Stop'
+          switch -CaseSensitive ($env:WINDOWS_SIGNING_BACKEND) {
+            'azure-key-vault' {
+              & $env:RELIC_PATH sign --file $ArtifactPath --key azure --config $env:WINDOWS_SIGNING_CONFIG --digest sha256
+            }
+            default { throw 'Unsupported signing backend' }
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Windows signing command failed' }
+          # Verify each file before Tauri can place it inside an installer or upload it.
+          $signature = Get-AuthenticodeSignature -LiteralPath $ArtifactPath
+          if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate -or
+              $signature.SignerCertificate.Subject -cne $env:WINDOWS_PUBLISHER -or
+              -not $signature.TimeStamperCertificate) {
+            throw 'Signed file failed Authenticode, publisher or timestamp verification'
+          }
+          '@ | Set-Content -Encoding utf8NoBOM $scriptPath
+          @{
+            bundle = @{
+              windows = @{
+                certificateThumbprint = $null
+                signCommand = @{
+                  cmd = 'pwsh'
+                  args = @('-NoProfile', '-NonInteractive', '-File', $scriptPath, '%1')
+                }
+              }
+            }
+          } | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8NoBOM 'src/src-tauri/tauri.windows-signing.json'
+          'args=--config src-tauri/tauri.windows-signing.json' >> $env:GITHUB_OUTPUT
+
       # Ohne diesen Schritt signiert Tauri ad-hoc ("-" aus tauri.conf.json). Eine ad-hoc-
       # Signatur hat KEINE Zertifikatskette, also kann codesign die Designated Requirement
       # nur an den nackten Code-Hash binden:  designated => cdhash H"dc76bb05…"
@@ -485,6 +623,10 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARIZE_METHOD: ${{ vars.APPLE_NOTARIZE_METHOD || 'apple-id' }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
           DISTRIBUTION_POLICY: ${{ inputs.distribution_policy }}
         run: |
           set -euo pipefail
@@ -504,7 +646,7 @@ jobs:
               exit 1
               ;;
           esac
-          if [ "$DISTRIBUTION_POLICY" = "market-ready" ] \
+          if [ "$DISTRIBUTION_POLICY" = "market-ready" ] && [ "$APPLE_NOTARIZE_METHOD" = "apple-id" ] \
             && { [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_PASSWORD:-}" ] || [ -z "${APPLE_TEAM_ID:-}" ]; }; then
             echo "::error::Notarisierungs-Zugangsdaten fehlen — kein nicht-notarisierter Release."
             exit 1
@@ -531,13 +673,29 @@ jobs:
           echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
 
           if [ "$DISTRIBUTION_POLICY" = "market-ready" ]; then
-            # Tauri notarisiert automatisch, sobald diese drei Variablen gesetzt sind.
-            # Sie sind oben fail-closed geprüft; ein marktreifer Release ohne Notarisierung existiert nicht.
-            {
-              echo "APPLE_ID=$APPLE_ID"
-              echo "APPLE_PASSWORD=$APPLE_PASSWORD"
-              echo "APPLE_TEAM_ID=$APPLE_TEAM_ID"
-            } >> "$GITHUB_ENV"
+            if [ "$APPLE_NOTARIZE_METHOD" = "api-key" ]; then
+              for name in APPLE_API_ISSUER APPLE_API_KEY APPLE_API_PRIVATE_KEY; do
+                [ -n "${!name:-}" ] || { echo "::error::Notarisierungs-Secret $name fehlt"; exit 1; }
+              done
+              api_key_path="$RUNNER_TEMP/notarization-key.p8"
+              test ! -e "$api_key_path"
+              umask 077
+              printf '%s\n' "$APPLE_API_PRIVATE_KEY" > "$api_key_path"
+              chmod 600 "$api_key_path"
+              {
+                echo "APPLE_API_ISSUER=$APPLE_API_ISSUER"
+                echo "APPLE_API_KEY=$APPLE_API_KEY"
+                echo "APPLE_API_KEY_PATH=$api_key_path"
+              } >> "$GITHUB_ENV"
+            else
+              # Tauri notarisiert automatisch, sobald diese drei Variablen gesetzt sind.
+              # Sie sind oben fail-closed geprüft; ein marktreifer Release ohne Notarisierung existiert nicht.
+              {
+                echo "APPLE_ID=$APPLE_ID"
+                echo "APPLE_PASSWORD=$APPLE_PASSWORD"
+                echo "APPLE_TEAM_ID=$APPLE_TEAM_ID"
+              } >> "$GITHUB_ENV"
+            fi
           else
             echo "legacy-v0.125: Apple-Development-Signatur aktiv, Notarisierung bewusst deaktiviert."
           fi
@@ -837,6 +995,7 @@ jobs:
         shell: pwsh
         env:
           TARGET: ${{ matrix.target }}
+          WINDOWS_PUBLISHER: ${{ vars.WINDOWS_PUBLISHER }}
         run: |
           $ErrorActionPreference = "Stop"
           $releaseRoot = "src/src-tauri/target/$env:TARGET/release"
@@ -851,8 +1010,13 @@ jobs:
             $signature = Get-AuthenticodeSignature -FilePath $file.FullName
             if ($signature.Status -ne "Valid") { throw "Ungültige Authenticode-Signatur: $($file.Name) / $($signature.Status)" }
             if ($null -eq $signature.TimeStamperCertificate) { throw "RFC-3161-Zeitstempel fehlt: $($file.Name)" }
-            if ($signature.SignerCertificate.Thumbprint -ne $env:WINDOWS_SIGNER_THUMBPRINT) {
-              throw "Signer-Drift bei $($file.Name)"
+            if ($env:WINDOWS_SIGNING_BACKEND -eq 'legacy-pfx') {
+              if ($signature.SignerCertificate.Thumbprint -ne $env:WINDOWS_SIGNER_THUMBPRINT) {
+                throw "Signer-Drift bei $($file.Name)"
+              }
+            } elseif ([string]::IsNullOrWhiteSpace($env:WINDOWS_PUBLISHER) -or
+                      $signature.SignerCertificate.Subject -cne $env:WINDOWS_PUBLISHER) {
+              throw "Windows-Publisher stimmt nicht mit WINDOWS_PUBLISHER überein."
             }
             $evidence += @{
               file = $file.Name
@@ -926,6 +1090,11 @@ jobs:
           test -s "$EVIDENCE"
           bash "$GITHUB_WORKSPACE/gate/scripts/upload-draft-assets.sh" "$EVIDENCE"
 
+      - name: Notarisierungs-API-Key entfernen
+        if: always() && runner.os == 'macOS' && vars.APPLE_NOTARIZE_METHOD == 'api-key'
+        shell: bash
+        run: rm -f -- "$RUNNER_TEMP/notarization-key.p8"
+
       - name: Private Trace-Credentials entfernen
         if: always()
         shell: bash
@@ -943,6 +1112,10 @@ jobs:
     needs: [release, build]
     if: ${{ always() && needs.release.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      id-token: write # kurzlebige Sigstore-Identität für GitHub Artifact Attestations
+      attestations: write
     steps:
       - name: Release-Evidence-Werkzeuge auschecken
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2, immutable
