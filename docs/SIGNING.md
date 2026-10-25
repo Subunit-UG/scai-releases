@@ -123,9 +123,23 @@ Erfolgskriterium; DLL-Ladefehler und falsche Architektur schlagen fehl.
 `relic` 8.2.0 wird unabhängig per `--version` und `--help` gestartet.
 Es werden keine Release-Dateien signiert.
 
-Probe-Ergebnis: ausstehend. Tatsächliche OIDC-Anmeldung, Zertifikatszugriff,
-Signierung, Zeitstempel, vollständiges Plattform-Bundling und Apple-Notarisierung
-sind **nicht verifiziert**.
+[Probe vom 25.10.2026: erfolgreich](https://github.com/subunit-ai/echo-releases/actions/runs/40195087632)
+auf dem Code-Stand `c79cdd6d8dce4f4a28868b5fd21e1bdcf0d8abb2`:
+
+| Runner | SignTool + dlib | relic |
+| --- | --- | --- |
+| `windows-latest` | `signtool+dlib=success` | `relic=success`, Version 8.2.0 |
+| `windows-11-arm` | `signtool+dlib=success` (x64-Emulation) | `relic=success`, Version 8.2.0 (x64-Emulation) |
+
+Beide Logs enthalten `AzureCliCredential authentication failed: Please run 'az login' to set up account`
+und `PROBE signtool+dlib PASS (x64; authentication failure reached; dummy EXE unchanged)`.
+Die dlib wird also tatsächlich über SignTool aufgerufen und erreicht ihre
+Authentifizierung. Der erste Lauf war wegen eines nicht zurückgesetzten,
+erwarteten nativen Fehlercodes rot; die Probe setzt ihn nach allen Prüfungen
+auf null. Echte Signierfehler bleiben im Produktionsskript unverändert fatal.
+
+Tatsächliche OIDC-Anmeldung, Zertifikatszugriff, Signierung, Zeitstempel,
+vollständiges Plattform-Bundling und Apple-Notarisierung sind **nicht verifiziert**.
 
 ### Plan B, falls ARM-Werkzeuge nicht starten
 
