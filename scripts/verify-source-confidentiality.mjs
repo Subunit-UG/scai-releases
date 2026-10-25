@@ -291,7 +291,7 @@ function requirePrContract(pr, require) {
           if-no-files-found: error
           retention-days: 1`,
     "pr-check.yml: Frontend build diagnostics require exact failed step one-day encrypted envelope");
-  const cargoTest = `      - name: cargo test (Sidecar-Trust-Modell + halo + verify-Suite)
+  const cargoTest = `      - name: cargo test (Sidecar-Trust-Modell + Takoru + verify-Suite)
         id: cargo_test
         working-directory: src
         shell: bash
@@ -914,7 +914,7 @@ export function validateSourceConfidentiality(workflows, assetSelector) {
     "pr-check.yml: Subunit Call diagnostics may upload only a one-time-key encrypted envelope",
   );
   require(
-    /name: Arbeitsbereich-Proof-Screenshots geschlossen prüfen[\s\S]{0,900}?desktop-dark-split\.png[\s\S]{0,300}?mobile-light-areas\.png[\s\S]{0,300}?mobile-dark\.png[\s\S]{0,300}?dashboard-two-instances\.png[\s\S]{0,300}?halo-two-instances\.png[\s\S]{0,300}?native-menu-bridge\.png/.test(pr),
+    /name: Arbeitsbereich-Proof-Screenshots geschlossen prüfen[\s\S]{0,900}?desktop-dark-split\.png[\s\S]{0,300}?mobile-light-areas\.png[\s\S]{0,300}?mobile-dark\.png[\s\S]{0,300}?dashboard-two-instances\.png[\s\S]{0,300}?takoru-two-instances\.png[\s\S]{0,200}?halo-two-instances\.png[\s\S]{0,300}?native-menu-bridge\.png/.test(pr),
     "pr-check.yml: Workspace proof must verify the representative Web and App-mode screenshots",
   );
   const workspaceAndCallUploadPaths = [...pr.matchAll(/^\s+path:\s*(.*(?:scai-workspace-(?:tabs|app-plugins)|scai-subunit-call).*?)\s*$/gm)]
