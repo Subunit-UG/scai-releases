@@ -52,6 +52,119 @@ const PR_PREFLIGHT = `  preflight:
           TRACE_BUNDLE_KEY: \${{ inputs.trace_bundle_public_key_base64 }}
         run: node gate/scripts/verify-source-confidentiality.mjs --pr-request`;
 
+// Discover actual confidential producers rather than maintaining a list of known
+// labels: a newly introduced wrapper must acquire the same end-to-end contract.
+export function validatePrDiagnosticInventory(pr) {
+  const errors = [];
+  const require = (ok, message) => { if (!ok) errors.push(`pr-check.yml: diagnostic inventory: ${message}`); };
+  const canonical = (text) => text.split("\n").filter(line => line.trim() && !line.trimStart().startsWith("#")).join("\n");
+  const jobs = [...pr.matchAll(/^  ([\w-]+):\n([\s\S]*?)(?=^  [\w-]+:|$(?![\s\S]))/gm)];
+  const directories = new Set();
+  const artifactNames = [...pr.matchAll(/^          name: (.+)$/gm)].map(m => m[1]);
+  let calls = 0;
+  for (const [, job, body] of jobs) {
+    const steps = [...body.matchAll(/^      - [\s\S]*?(?=^      - |$(?![\s\S]))/gm)].map(m => canonical(m[0]));
+    // Fail closed before classifying uploads: quoted/aliased keys or values
+    // must not hide an extra upload from the exact producer-consumer contract.
+    for (const step of steps) {
+      const first = step.split("\n")[0].match(/^      - (name|uses|id): (.+)$/);
+      const entries = [...step.matchAll(/^        (\S.*)$/gm)].map(m => m[1]);
+      const keys = entries.map(line => line.match(/^([A-Za-z_][A-Za-z0-9_-]*):(?: |$)/)?.[1]);
+      if (first) keys.unshift(first[1]);
+      require(Boolean(first) && keys.every(Boolean) && keys.length === new Set(keys).size,
+        `${job}: all steps need canonical unique keys, without aliases or quoted mappings`);
+      const uses = [...step.matchAll(/^(?:      - |        )uses: (.+)$/gm)].map(m => m[1]);
+      require(uses.every(value => /^[A-Za-z0-9_./-]+@[a-zA-Z0-9_.-]+(?: #.*)?$/.test(value)),
+        `${job}: action references must be canonical unquoted scalars`);
+    }
+    const producers = steps.filter(step => step.includes("run-confidential.sh"));
+    if (!producers.length) continue;
+    const ids = steps.flatMap(step => [...step.matchAll(/^        id: (.+)$/gm)].map(m => m[1]));
+    const uploads = steps.filter(step => step.includes("uses: actions/upload-artifact@"));
+    for (const upload of uploads) {
+      const mapping = upload.match(/^        with:\n([\s\S]*?)(?=^        \S|$(?![\s\S]))/m)?.[1] ?? "";
+      const entries = [...mapping.matchAll(/^          (\S.*)$/gm)].map(m => m[1]);
+      const keys = entries.map(line => line.match(/^([A-Za-z_][A-Za-z0-9_-]*): /)?.[1]);
+      const paths = entries.filter(line => line.startsWith("path: ")).map(line => line.slice(6));
+      require(keys.length > 0 && keys.every(Boolean) && keys.length === new Set(keys).size
+        && paths.length === 1 && /^\$\{\{ runner\.temp \}\}\/[A-Za-z0-9_.*\/-]+$/.test(paths[0])
+        && !paths[0].includes("..") && !paths[0].includes("//"),
+        `${job}: all artifact inputs need canonical unique mappings and one inline private path`);
+    }
+    const expectedDirectories = [];
+    const claimedUploads = new Set();
+    for (const step of producers) {
+      const run = step.match(/^        run: ([\s\S]*?)(?=^        [\w-]+:|$(?![\s\S]))/m)?.[1] ?? "";
+      const count = (run.match(/run-confidential\.sh/g) ?? []).length;
+      calls += count;
+      require(count > 0 && count === (step.match(/run-confidential\.sh/g) ?? []).length,
+        `${job}: wrappers must be executable run commands, not comments or hidden mappings`);
+      const id = step.match(/^        id: ([a-z][a-z0-9_]*)$/m)?.[1];
+      require(Boolean(id) && ids.filter(value => value === id).length === 1,
+        `${job}: every producer needs one unique step id`);
+      const label = `${job}/${id ?? "missing-id"}`;
+      const fields = [...step.matchAll(/^        ([\w-]+):/gm)].map(m => m[1]);
+      require(fields.length === new Set(fields).size && fields.includes("env") && fields.includes("run")
+        && !/^ {8,10}(?:["'][^"'\n]+["']\s*:|<<:)/m.test(step)
+        && !run.includes("SCAI_ENCRYPTED_DIAGNOSTIC_"),
+        `${label}: diagnostic mappings and runtime environment must not be shadowed`);
+      require((step.match(/^          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64:/gm) ?? []).length === 1
+        && step.split("\n").includes("          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}"),
+        `${label}: recipient must cover every runtime branch`);
+      const pathLines = [...step.matchAll(/^          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: (.+)$/gm)];
+      const directory = pathLines[0]?.[1].match(/^\$\{\{ inputs\.diagnostic_public_key_base64 != '' && format\('\{0\}\/([a-z0-9-]+)\/failure\.encrypted\.json', runner\.temp\) \|\| '' \}\}$/)?.[1];
+      require(pathLines.length === 1 && Boolean(directory) && !directories.has(directory),
+        `${label}: one exclusive private directory and encrypted destination required`);
+      if (!directory) continue;
+      directories.add(directory);
+      expectedDirectories.push(directory);
+      require(!/^        continue-on-error:/m.test(step), `${label}: producer failures must remain blocking`);
+      const path = `          path: \${{ runner.temp }}/${directory}/*.encrypted.json`;
+      const matches = uploads.filter(upload => upload.includes(path));
+      require(matches.length === 1, `${label}: exactly one upload must retain every encrypted failure`);
+      for (const upload of matches) {
+        claimedUploads.add(upload);
+        const name = upload.match(/^          name: (.+)$/m)?.[1];
+        require(Boolean(name) && artifactNames.filter(value => value === name).length === 1
+          && /^[a-z0-9-]+-(?:\$\{\{ matrix\.label \}\}-)?\$\{\{ github\.run_id \}\}$/.test(name)
+          && (!/^    strategy:/m.test(body) || name.includes("${{ matrix.label }}")),
+          `${label}: artifact must be unique across jobs and matrix entries`);
+        const lines = upload.split("\n");
+        require(lines.length === 8
+          && /^      - name: .+$/.test(lines[0])
+          && lines[1] === `        if: failure() && steps.${id}.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''`
+          && lines[2] === "        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable"
+          && lines[3] === "        with:"
+          && lines[5] === path
+          && lines[6] === "          if-no-files-found: error"
+          && lines[7] === "          retention-days: 1"
+          && steps.indexOf(upload) > steps.indexOf(step),
+          `${label}: exact failed-step keyed immutable one-day upload required`);
+      }
+    }
+    for (const upload of uploads) {
+      if (claimedUploads.has(upload)) continue;
+      // Existing visual envelopes keep their precise file paths. A directory,
+      // multiline value, alias or wildcard cannot become an unclaimed upload.
+      const path = upload.match(/^          path: (.+)$/m)?.[1] ?? "";
+      require(/^\$\{\{ runner\.temp \}\}\/(?:scai-[a-z0-9-]+-encrypted-(?:shots|proof)\.json|trace-host-macos-arm64-internal\.tar\.gz\.envelope\.json)$/.test(path),
+        `${job}: unbound or broad encrypted diagnostic upload forbidden`);
+    }
+    const setup = `      - name: Exklusive verschlüsselte Diagnoseordner vorbereiten
+        if: inputs.diagnostic_public_key_base64 != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077\n${expectedDirectories.map(dir => `          mkdir "$RUNNER_TEMP/${dir}"`).join("\n")}`;
+    require(steps.filter(step => step === setup).length === 1
+      && steps.indexOf(setup) < steps.indexOf(producers[0]),
+      `${job}: exclusive directories must be created privately before any producer`);
+  }
+  require(calls > 0 && calls === (pr.match(/run-confidential\.sh/g) ?? []).length,
+    "every actual wrapper must belong to an inventoried canonical job and step");
+  return errors;
+}
+
 function requirePrContract(pr, require) {
   const canonical = (text) => text.split("\n").filter((line) => line.trim() && !line.trimStart().startsWith("#")).join("\n");
   const roots = [...pr.matchAll(/^([\w-]+):/gm)].map((match) => match[1]);
@@ -107,20 +220,23 @@ function requirePrContract(pr, require) {
     && steps.indexOf(rustSetup) < steps.indexOf(rustReady)
     && steps.indexOf(rustReady) < privateCheckout && steps.indexOf(rustReady) < frontendTests,
   "pr-check.yml: Rust setup and bounded compiler readiness must precede private checkout and frontend tests without bypass");
-  for (const [name, label, command] of [
-    ["Plugin-Deploy-Snapshot und Fehlergrenzen prüfen", "plugin-deploy-tests", "npm run test:plugin-deploy"],
-  ]) {
-    const expected = `      - name: ${name}\n        working-directory: src\n        shell: bash\n        run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" ${label} ${command}`;
-    require(steps.filter((step) => step === expected).length === 1,
-      `pr-check.yml: ${label} must be an unconditional confidential fail-closed source gate`);
-  }
+  const pluginDeploy = `      - name: Plugin-Deploy-Snapshot und Fehlergrenzen prüfen
+        id: plugin_deploy_tests
+        working-directory: src
+        shell: bash
+        env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: \${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: \${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-plugin-deploy-tests-diagnostic/failure.encrypted.json', runner.temp) || '' }}
+        run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" plugin-deploy-tests npm run test:plugin-deploy`;
+  require(steps.filter(step => step === pluginDeploy).length === 1,
+    "pr-check.yml: plugin-deploy-tests must be an unconditional confidential fail-closed source gate");
   const webReleaseFixture = `      - name: Web- und Release-Fixture-Verträge prüfen
         id: web_release_fixture_tests
         working-directory: src
         shell: bash
         env:
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: \${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: \${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-web-release-fixture-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: \${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-web-release-fixture-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" web-release-fixture-tests npm run test:web`;
   require(steps.filter((step) => step === webReleaseFixture).length === 1
     && steps.filter((step) => /^        id: web_release_fixture_tests$/m.test(step)).length === 1,
@@ -131,7 +247,7 @@ function requirePrContract(pr, require) {
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-web-release-fixture-encrypted-diagnostic-\${{ github.run_id }}
-          path: \${{ runner.temp }}/scai-web-release-fixture-diagnostic.json
+          path: \${{ runner.temp }}/scai-web-release-fixture-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1`,
     "pr-check.yml: Web/release fixture diagnostics require exact failed step one-day encrypted envelope");
@@ -141,7 +257,7 @@ function requirePrContract(pr, require) {
         shell: bash
         env:
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: \${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: \${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-frontend-unit-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: \${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-frontend-unit-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" frontend-unit-tests bun test src/lib`;
   require(steps.filter((step) => step === frontendUnit).length === 1,
     "pr-check.yml: Frontend unit diagnostics must stay confidential and use the supplied one-time key");
@@ -151,7 +267,7 @@ function requirePrContract(pr, require) {
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-frontend-unit-encrypted-diagnostic-\${{ github.run_id }}
-          path: \${{ runner.temp }}/scai-frontend-unit-diagnostic.json
+          path: \${{ runner.temp }}/scai-frontend-unit-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1`, "pr-check.yml: Frontend unit diagnostics may upload only the keyed one-day encrypted envelope, never raw test output");
   const frontendBuild = `      - name: Bauen (tsc + vite)
@@ -160,7 +276,7 @@ function requirePrContract(pr, require) {
         shell: bash
         env:
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: \${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: \${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-frontend-build-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: \${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-frontend-build-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" frontend-build npm run build`;
   require(steps.filter(step => step === frontendBuild).length === 1
     && steps.filter(step => /^        id: frontend_build$/m.test(step)).length === 1,
@@ -171,7 +287,7 @@ function requirePrContract(pr, require) {
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-frontend-build-encrypted-diagnostic-\${{ github.run_id }}
-          path: \${{ runner.temp }}/scai-frontend-build-diagnostic.json
+          path: \${{ runner.temp }}/scai-frontend-build-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1`,
     "pr-check.yml: Frontend build diagnostics require exact failed step one-day encrypted envelope");
@@ -181,7 +297,7 @@ function requirePrContract(pr, require) {
         shell: bash
         env:
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: \${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: \${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-cargo-test-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: \${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-cargo-test-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" cargo-test cargo test --manifest-path src-tauri/Cargo.toml --lib --features local-meet`;
   require(steps.filter(step => step === cargoTest).length === 1
     && steps.filter(step => /^        id: cargo_test$/m.test(step)).length === 1,
@@ -192,7 +308,7 @@ function requirePrContract(pr, require) {
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-cargo-test-encrypted-diagnostic-\${{ github.run_id }}
-          path: \${{ runner.temp }}/scai-cargo-test-diagnostic.json
+          path: \${{ runner.temp }}/scai-cargo-test-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1`,
     "pr-check.yml: Cargo test diagnostics require exact failed step one-day encrypted envelope");
@@ -205,12 +321,16 @@ function requirePrContract(pr, require) {
           PAGES_PROOF_FOCUS: host-restore
           PAGES_PROOF_OUT: \${{ runner.temp }}/scai-host-restore-webkit
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: \${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: \${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-host-restore-webkit-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: \${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-host-restore-webkit-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" host-restore-webkit-proof node scripts/verify-pages-foundation.mjs`;
   require(steps.filter((step) => step === webkit).length === 1, "pr-check.yml: WebKit host restore must retain its explicit confidential unfiltered source gate");
   const install = steps.indexOf(`      - name: Browser für Seh-Harnesse
+        id: playwright_install
         working-directory: src
         shell: bash
+        env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: \${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: \${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-playwright-install-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" playwright-install npx playwright install --with-deps chromium webkit`);
   require(install >= 0 && install < steps.indexOf(webkit), "pr-check.yml: WebKit system dependencies must precede host restore");
   const webkitUploads = steps.filter((step) => step.includes("uses: actions/upload-artifact@") && /host.restore.webkit/.test(step));
@@ -219,7 +339,7 @@ function requirePrContract(pr, require) {
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-host-restore-webkit-encrypted-diagnostic-\${{ github.run_id }}
-          path: \${{ runner.temp }}/scai-host-restore-webkit-diagnostic.json
+          path: \${{ runner.temp }}/scai-host-restore-webkit-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1`, "pr-check.yml: WebKit diagnostics must be only the keyed one-day encrypted envelope, never raw proof output");
 }
@@ -507,6 +627,7 @@ export function validateSourceConfidentiality(workflows, assetSelector) {
 
   const pr = workflows["pr-check.yml"] ?? "";
   requirePrContract(pr, require);
+  for (const error of validatePrDiagnosticInventory(pr)) require(false, error);
   for (const label of [
     "npm-ci", "frontend-unit-tests", "cli-drift", "release-meta", "plugin-bundles", "no-demo-data",
     "frontend-build", "support-diagnostics-proof", "meet-visual-proof", "chat-dock-visual-proof", "sentinel-crm-proof", "sentinel-routing-proof", "cargo-test", "native-cargo-check",
@@ -589,8 +710,8 @@ export function validateSourceConfidentiality(workflows, assetSelector) {
     "pr-check.yml: standalone Trace must retain Linux, macOS ARM/Intel and Windows lanes",
   );
   require(
-    /if: failure\(\) && matrix\.label == 'windows-x64' && inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,350}?path: \$\{\{ runner\.temp \}\}\/trace-windows-diagnostic\.json/.test(pr),
-    "pr-check.yml: Trace Windows diagnostics may upload only a one-time-key encrypted envelope",
+    /if: failure\(\) && steps\.trace_native_check\.outcome == 'failure' && inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,350}?path: \$\{\{ runner\.temp \}\}\/trace-native-diagnostic\/\*\.encrypted\.json/.test(pr),
+    "pr-check.yml: Trace native diagnostics may upload only a one-time-key encrypted envelope",
   );
   require(
     pr.includes("trace_bundle_public_key_base64"),
@@ -645,19 +766,19 @@ export function validateSourceConfidentiality(workflows, assetSelector) {
     "pr-check.yml: plaintext Trace delivery archives must never be uploaded from the public workflow",
   );
   require(
-    /if: failure\(\) &&[^\n]*inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,350}?path: \$\{\{ runner\.temp \}\}\/scai-support-diagnostic\.json/.test(pr),
+    /if: failure\(\) &&[^\n]*inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,350}?path: \$\{\{ runner\.temp \}\}\/scai-support-diagnostic\/\*\.encrypted\.json/.test(pr),
     "pr-check.yml: Support diagnostics may upload only a one-time-key encrypted envelope",
   );
   require(
-    /if: failure\(\) &&[^\n]*inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,350}?path: \$\{\{ runner\.temp \}\}\/scai-pages-diagnostic\.json/.test(pr),
+    /if: failure\(\) &&[^\n]*inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,350}?path: \$\{\{ runner\.temp \}\}\/scai-pages-diagnostic\/\*\.encrypted\.json/.test(pr),
     "pr-check.yml: Pages diagnostics may upload only a one-time-key encrypted envelope",
   );
   require(
-    /if: failure\(\) &&[^\n]*inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,350}?path: \$\{\{ runner\.temp \}\}\/scai-chat-dock-diagnostic\.json/.test(pr),
+    /if: failure\(\) &&[^\n]*inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,350}?path: \$\{\{ runner\.temp \}\}\/scai-chat-dock-diagnostic\/\*\.encrypted\.json/.test(pr),
     "pr-check.yml: Chat-Dock diagnostics may upload only a one-time-key encrypted envelope",
   );
   require(
-    /if: failure\(\) &&[^\n]*inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,350}?path: \$\{\{ runner\.temp \}\}\/scai-sentinel-crm-diagnostic\.json/.test(pr),
+    /if: failure\(\) &&[^\n]*inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,350}?path: \$\{\{ runner\.temp \}\}\/scai-sentinel-crm-diagnostic\/\*\.encrypted\.json/.test(pr),
     "pr-check.yml: Sentinel CRM diagnostics may upload only a one-time-key encrypted envelope",
   );
   const routingProofSteps = pr.split("      - name: Sentinel Lead Ownership und SLA Routing beweisen\n");
@@ -666,12 +787,12 @@ export function validateSourceConfidentiality(workflows, assetSelector) {
     routingProofSteps.length === 2
       && routingProof.includes("id: routing_proof")
       && routingProof.includes("SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}")
-      && routingProof.includes("SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-sentinel-routing-diagnostic.json', runner.temp) || '' }}")
+      && routingProof.includes("SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-sentinel-routing-diagnostic/failure.encrypted.json', runner.temp) || '' }}")
       && routingProof.includes('run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" sentinel-routing-proof node scripts/verify-sentinel-routing.mjs'),
     "pr-check.yml: Sentinel Routing proof must seal private failures with the supplied one-time key",
   );
   require(
-    /if: failure\(\) && steps\.routing_proof\.outcome == 'failure' && inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,350}?path: \$\{\{ runner\.temp \}\}\/scai-sentinel-routing-diagnostic\.json/.test(pr),
+    /if: failure\(\) && steps\.routing_proof\.outcome == 'failure' && inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,350}?path: \$\{\{ runner\.temp \}\}\/scai-sentinel-routing-diagnostic\/\*\.encrypted\.json/.test(pr),
     "pr-check.yml: Sentinel Routing diagnostics may upload only a one-time-key encrypted envelope",
   );
   require(
@@ -769,27 +890,27 @@ export function validateSourceConfidentiality(workflows, assetSelector) {
     "pr-check.yml: Workforce Inbox proof must run confidentially into its isolated fixture directory",
   );
   require(
-    /name: Arbeitsbereich mit Tabs und geteilten Flächen im Web beweisen[\s\S]{0,700}?if: steps\.source_proofs\.outputs\.workspace_browser == 'true'[\s\S]{0,700}?SCAI_WORKSPACE_PROOF_OUT: \$\{\{ runner\.temp \}\}\/scai-workspace-tabs[\s\S]{0,700}?SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: \$\{\{ inputs\.diagnostic_public_key_base64 \}\}[\s\S]{0,700}?SCAI_ENCRYPTED_DIAGNOSTIC_PATH: \$\{\{ inputs\.diagnostic_public_key_base64 != '' && format\('\{0\}\/scai-workspace-tabs-diagnostic\.json', runner\.temp\) \|\| '' \}\}[\s\S]{0,700}?run-confidential\.sh" workspace-tabs-proof node scripts\/verify-workspace-tabs\.mjs/.test(pr),
+    /name: Arbeitsbereich mit Tabs und geteilten Flächen im Web beweisen[\s\S]{0,700}?if: steps\.source_proofs\.outputs\.workspace_browser == 'true'[\s\S]{0,700}?SCAI_WORKSPACE_PROOF_OUT: \$\{\{ runner\.temp \}\}\/scai-workspace-tabs[\s\S]{0,700}?SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: \$\{\{ inputs\.diagnostic_public_key_base64 \}\}[\s\S]{0,700}?SCAI_ENCRYPTED_DIAGNOSTIC_PATH: \$\{\{ inputs\.diagnostic_public_key_base64 != '' && format\('\{0\}\/scai-workspace-tabs-diagnostic\/failure\.encrypted\.json', runner\.temp\) \|\| '' \}\}[\s\S]{0,700}?run-confidential\.sh" workspace-tabs-proof node scripts\/verify-workspace-tabs\.mjs/.test(pr),
     "pr-check.yml: Workspace tab proof must run confidentially when both source harnesses exist",
   );
   require(
-    /name: Arbeitsbereich mit App-Modus-Plugins beweisen[\s\S]{0,700}?if: steps\.source_proofs\.outputs\.workspace_browser == 'true'[\s\S]{0,700}?SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: \$\{\{ inputs\.diagnostic_public_key_base64 \}\}[\s\S]{0,700}?SCAI_ENCRYPTED_DIAGNOSTIC_PATH: \$\{\{ inputs\.diagnostic_public_key_base64 != '' && format\('\{0\}\/scai-workspace-app-plugins-diagnostic\.json', runner\.temp\) \|\| '' \}\}[\s\S]{0,700}?run-confidential\.sh" workspace-app-plugins-proof node scripts\/verify-workspace-app-plugins\.mjs/.test(pr),
+    /name: Arbeitsbereich mit App-Modus-Plugins beweisen[\s\S]{0,700}?if: steps\.source_proofs\.outputs\.workspace_browser == 'true'[\s\S]{0,700}?SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: \$\{\{ inputs\.diagnostic_public_key_base64 \}\}[\s\S]{0,700}?SCAI_ENCRYPTED_DIAGNOSTIC_PATH: \$\{\{ inputs\.diagnostic_public_key_base64 != '' && format\('\{0\}\/scai-workspace-app-plugins-diagnostic\/failure\.encrypted\.json', runner\.temp\) \|\| '' \}\}[\s\S]{0,700}?run-confidential\.sh" workspace-app-plugins-proof node scripts\/verify-workspace-app-plugins\.mjs/.test(pr),
     "pr-check.yml: Workspace app-plugin proof must run confidentially when both source harnesses exist",
   );
   require(
-    /name: Verschlüsselte Arbeitsbereich-Tabs-Fehlerdiagnostik bereitstellen[\s\S]{0,500}?if: failure\(\) && steps\.workspace_tabs_proof\.outcome == 'failure' && inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,500}?path: \$\{\{ runner\.temp \}\}\/scai-workspace-tabs-diagnostic\.json[\s\S]{0,200}?retention-days: 1/.test(pr),
+    /name: Verschlüsselte Arbeitsbereich-Tabs-Fehlerdiagnostik bereitstellen[\s\S]{0,500}?if: failure\(\) && steps\.workspace_tabs_proof\.outcome == 'failure' && inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,500}?path: \$\{\{ runner\.temp \}\}\/scai-workspace-tabs-diagnostic\/\*\.encrypted\.json[\s\S]{0,200}?retention-days: 1/.test(pr),
     "pr-check.yml: Workspace tab diagnostics may upload only a one-time-key encrypted envelope",
   );
   require(
-    /name: Verschlüsselte Arbeitsbereich-App-Plugins-Fehlerdiagnostik bereitstellen[\s\S]{0,500}?if: failure\(\) && steps\.workspace_app_plugins_proof\.outcome == 'failure' && inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,500}?path: \$\{\{ runner\.temp \}\}\/scai-workspace-app-plugins-diagnostic\.json[\s\S]{0,200}?retention-days: 1/.test(pr),
+    /name: Verschlüsselte Arbeitsbereich-App-Plugins-Fehlerdiagnostik bereitstellen[\s\S]{0,500}?if: failure\(\) && steps\.workspace_app_plugins_proof\.outcome == 'failure' && inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,500}?path: \$\{\{ runner\.temp \}\}\/scai-workspace-app-plugins-diagnostic\/\*\.encrypted\.json[\s\S]{0,200}?retention-days: 1/.test(pr),
     "pr-check.yml: Workspace app-plugin diagnostics may upload only a one-time-key encrypted envelope",
   );
   require(
-    /name: Subunit Call im Browser einschließlich Aufnahme und Native-Quit-Schutz beweisen[\s\S]{0,700}?if: always\(\) && steps\.source_proofs\.outputs\.subunit_call == 'true'[\s\S]{0,700}?SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: \$\{\{ inputs\.diagnostic_public_key_base64 \}\}[\s\S]{0,700}?SCAI_ENCRYPTED_DIAGNOSTIC_PATH: \$\{\{ inputs\.diagnostic_public_key_base64 != '' && format\('\{0\}\/scai-subunit-call-diagnostic\.json', runner\.temp\) \|\| '' \}\}[\s\S]{0,700}?run-confidential\.sh" subunit-call-proof node scripts\/verify-subunit-call\.mjs/.test(pr),
+    /name: Subunit Call im Browser einschließlich Aufnahme und Native-Quit-Schutz beweisen[\s\S]{0,700}?if: always\(\) && steps\.source_proofs\.outputs\.subunit_call == 'true'[\s\S]{0,700}?SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: \$\{\{ inputs\.diagnostic_public_key_base64 \}\}[\s\S]{0,700}?SCAI_ENCRYPTED_DIAGNOSTIC_PATH: \$\{\{ inputs\.diagnostic_public_key_base64 != '' && format\('\{0\}\/scai-subunit-call-diagnostic\/failure\.encrypted\.json', runner\.temp\) \|\| '' \}\}[\s\S]{0,700}?run-confidential\.sh" subunit-call-proof node scripts\/verify-subunit-call\.mjs/.test(pr),
     "pr-check.yml: Subunit Call proof must run confidentially whenever its source harness exists",
   );
   require(
-    /name: Verschlüsselte Subunit-Call-Fehlerdiagnostik bereitstellen[\s\S]{0,500}?if: failure\(\) && steps\.subunit_call_proof\.outcome == 'failure' && inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,500}?path: \$\{\{ runner\.temp \}\}\/scai-subunit-call-diagnostic\.json[\s\S]{0,200}?retention-days: 1/.test(pr),
+    /name: Verschlüsselte Subunit-Call-Fehlerdiagnostik bereitstellen[\s\S]{0,500}?if: failure\(\) && steps\.subunit_call_proof\.outcome == 'failure' && inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,500}?path: \$\{\{ runner\.temp \}\}\/scai-subunit-call-diagnostic\/\*\.encrypted\.json[\s\S]{0,200}?retention-days: 1/.test(pr),
     "pr-check.yml: Subunit Call diagnostics may upload only a one-time-key encrypted envelope",
   );
   require(
@@ -800,9 +921,9 @@ export function validateSourceConfidentiality(workflows, assetSelector) {
     .map((match) => match[1]);
   require(
     workspaceAndCallUploadPaths.length === 3
-      && workspaceAndCallUploadPaths.includes("${{ runner.temp }}/scai-workspace-tabs-diagnostic.json")
-      && workspaceAndCallUploadPaths.includes("${{ runner.temp }}/scai-workspace-app-plugins-diagnostic.json")
-      && workspaceAndCallUploadPaths.includes("${{ runner.temp }}/scai-subunit-call-diagnostic.json"),
+      && workspaceAndCallUploadPaths.includes("${{ runner.temp }}/scai-workspace-tabs-diagnostic/*.encrypted.json")
+      && workspaceAndCallUploadPaths.includes("${{ runner.temp }}/scai-workspace-app-plugins-diagnostic/*.encrypted.json")
+      && workspaceAndCallUploadPaths.includes("${{ runner.temp }}/scai-subunit-call-diagnostic/*.encrypted.json"),
     "pr-check.yml: raw Workspace proof output must not be uploaded; raw Call output must not be uploaded; only the three encrypted diagnostic envelopes are allowed",
   );
   require(
@@ -829,15 +950,15 @@ export function validateSourceConfidentiality(workflows, assetSelector) {
     "pr-check.yml: Revenue proof may upload only its sanitized fixture screenshot directory",
   );
   require(
-    /if: failure\(\) && steps\.billing_revenue_proof\.outcome == 'failure' && inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,350}?path: \$\{\{ runner\.temp \}\}\/scai-revenue-billing-diagnostic\.json/.test(pr),
+    /if: failure\(\) && steps\.billing_revenue_proof\.outcome == 'failure' && inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,350}?path: \$\{\{ runner\.temp \}\}\/scai-revenue-billing-diagnostic\/\*\.encrypted\.json/.test(pr),
     "pr-check.yml: Billing Revenue diagnostics may upload only a one-time-key encrypted envelope",
   );
   require(
-    /if: failure\(\) && steps\.offers_revenue_proof\.outcome == 'failure' && inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,350}?path: \$\{\{ runner\.temp \}\}\/scai-revenue-offers-diagnostic\.json/.test(pr),
+    /if: failure\(\) && steps\.offers_revenue_proof\.outcome == 'failure' && inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,350}?path: \$\{\{ runner\.temp \}\}\/scai-revenue-offers-diagnostic\/\*\.encrypted\.json/.test(pr),
     "pr-check.yml: Offers Revenue diagnostics may upload only a one-time-key encrypted envelope",
   );
   require(
-    /if: failure\(\) && steps\.workgraph_blackbox_proof\.outcome == 'failure' && inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,350}?path: \$\{\{ runner\.temp \}\}\/scai-workgraph-blackbox-diagnostic\.json/.test(pr),
+    /if: failure\(\) && steps\.workgraph_blackbox_proof\.outcome == 'failure' && inputs\.diagnostic_public_key_base64 != ''[\s\S]{0,350}?path: \$\{\{ runner\.temp \}\}\/scai-workgraph-blackbox-diagnostic\/\*\.encrypted\.json/.test(pr),
     "pr-check.yml: Workgraph diagnostics may upload only a one-time-key encrypted envelope",
   );
 
@@ -859,14 +980,14 @@ export function validateSourceConfidentiality(workflows, assetSelector) {
         env:${label === "radar" ? "\n          SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}\n          REQUEST_ID: ${{ needs.preflight.outputs.request_id }}" : ""}
           SCAI_TOOLCHAIN: \${{ github.workspace }}/src
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: \${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: \${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-${label}-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: \${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-${label}-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" ${label}-proof ${harness === null ? `bash "$GITHUB_WORKSPACE/gate/scripts/run-${label}-proof.sh"` : `node scripts/${harness}`}`;
     const expectedUpload = `      - name: Verschluesselte ${label} Fehlerdiagnostik bereitstellen
         if: failure() && steps.${key}_proof.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-${label}-encrypted-diagnostic-\${{ github.run_id }}
-          path: \${{ runner.temp }}/scai-${label}-diagnostic.json
+          path: \${{ runner.temp }}/scai-${label}-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1`;
     const proofs = recoveredSteps.filter(block => block.includes(`${key}_proof`) && /^      - name: Restored /m.test(block));

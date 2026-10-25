@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { validatePrRequest, validateSourceConfidentiality, validateSonarHelpers } from "./verify-source-confidentiality.mjs";
+import { validatePrDiagnosticInventory, validatePrRequest, validateSourceConfidentiality, validateSonarHelpers } from "./verify-source-confidentiality.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fixtures = Object.fromEntries(
@@ -34,7 +34,7 @@ test("Meet proof stays mandatory and pairs optional encryption with its own enve
   assert.match(proof, /^        working-directory: src$/m);
   assert.match(proof, /^          PROOF_RUN_ID: ci$/m);
   assert.match(proof, /^          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: \$\{\{ inputs\.diagnostic_public_key_base64 \}\}$/m);
-  assert.ok(proof.includes("SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-meet-diagnostic.json', runner.temp) || '' }}"));
+  assert.ok(proof.includes("SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-meet-diagnostic/failure.encrypted.json', runner.temp) || '' }}"));
   assert.match(proof, /^        run: bash "\$GITHUB_WORKSPACE\/gate\/scripts\/run-confidential\.sh" meet-visual-proof node scripts\/verify-meet-plugin\.mjs$/m);
   assert.doesNotMatch(proof, /^        (?:if|continue-on-error|timeout-minutes):/m);
   assert.equal(fixtures["pr-check.yml"].match(/^        id: meet_visual_proof$/gm)?.length, 1);
@@ -45,7 +45,7 @@ test("Meet encrypted upload requires its own failure and recipient with one-day 
   assert.match(upload, /^        if: failure\(\) && steps\.meet_visual_proof\.outcome == 'failure' && inputs\.diagnostic_public_key_base64 != ''$/m);
   assert.match(upload, /^        uses: actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable$/m);
   assert.match(upload, /^          name: scai-meet-encrypted-diagnostic-\$\{\{ github\.run_id \}\}$/m);
-  assert.match(upload, /^          path: \$\{\{ runner\.temp \}\}\/scai-meet-diagnostic\.json$/m);
+  assert.match(upload, /^          path: \$\{\{ runner\.temp \}\}\/scai-meet-diagnostic\/\*\.encrypted\.json$/m);
   assert.match(upload, /^          if-no-files-found: error$/m);
   assert.match(upload, /^          retention-days: 1$/m);
   assert.doesNotMatch(upload, /^        continue-on-error:/m);
@@ -405,9 +405,9 @@ for (const [label, from, to] of [
   ["only one viewport", "          PAGES_PROOF_FOCUS: host-restore", "          PAGES_PROOF_FOCUS: host-restore\n          PAGES_PROOF_VARIANT: light-390"],
   ["overwriting normal Pages output", "PAGES_PROOF_OUT: ${{ runner.temp }}/scai-host-restore-webkit", "PAGES_PROOF_OUT: ~/.cache/u1-shots/scai-pages"],
   ["missing WebKit deps", "install --with-deps chromium webkit", "install chromium"],
-  ["raw WebKit upload", "path: ${{ runner.temp }}/scai-host-restore-webkit-diagnostic.json", "path: ${{ runner.temp }}/scai-host-restore-webkit/"],
-  ["WebKit upload path suffix", "path: ${{ runner.temp }}/scai-host-restore-webkit-diagnostic.json", "path: ${{ runner.temp }}/scai-host-restore-webkit-diagnostic.json/../scai-host-restore-webkit/"],
-  ["second raw WebKit upload", "          path: ${{ runner.temp }}/scai-host-restore-webkit-diagnostic.json", "          path: ${{ runner.temp }}/scai-host-restore-webkit-diagnostic.json\n          path: src/"],
+  ["raw WebKit upload", "path: ${{ runner.temp }}/scai-host-restore-webkit-diagnostic/*.encrypted.json", "path: ${{ runner.temp }}/scai-host-restore-webkit/"],
+  ["WebKit upload path suffix", "path: ${{ runner.temp }}/scai-host-restore-webkit-diagnostic/*.encrypted.json", "path: ${{ runner.temp }}/scai-host-restore-webkit-diagnostic/*.encrypted.json/../scai-host-restore-webkit/"],
+  ["second raw WebKit upload", "          path: ${{ runner.temp }}/scai-host-restore-webkit-diagnostic/*.encrypted.json", "          path: ${{ runner.temp }}/scai-host-restore-webkit-diagnostic/*.encrypted.json\n          path: src/"],
   ["unkeyed WebKit diagnostic", "if: failure() && steps.host_restore_webkit.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''", "if: failure()"],
 ]) rejectPrMutation(label, (source) => source.replace(from, to), /WebKit/);
 
@@ -562,22 +562,22 @@ test("Windows ARM diagnostics cannot upload plaintext or a source-tree path", ()
   assert.match(validateSourceConfidentiality(unsafe, assetSelector).join("\n"), /only a one-time-key encrypted envelope/);
 });
 
-test("Trace Windows diagnostics cannot upload plaintext or a source-tree path", () => {
+test("Trace native diagnostics cannot upload plaintext or a source-tree path", () => {
   const unsafe = {
     ...fixtures,
     "pr-check.yml": fixtures["pr-check.yml"].replace(
-      "path: ${{ runner.temp }}/trace-windows-diagnostic.json",
+      "path: ${{ runner.temp }}/trace-native-diagnostic/*.encrypted.json",
       "path: trace-src/private-clippy.log",
     ),
   };
-  assert.match(validateSourceConfidentiality(unsafe, assetSelector).join("\n"), /Trace Windows diagnostics may upload only a one-time-key encrypted envelope/);
+  assert.match(validateSourceConfidentiality(unsafe, assetSelector).join("\n"), /Trace native diagnostics may upload only a one-time-key encrypted envelope/);
 });
 
 test("Pages diagnostics cannot upload plaintext or a source-tree path", () => {
   const unsafe = {
     ...fixtures,
     "pr-check.yml": fixtures["pr-check.yml"].replace(
-      "path: ${{ runner.temp }}/scai-pages-diagnostic.json",
+      "path: ${{ runner.temp }}/scai-pages-diagnostic/*.encrypted.json",
       "path: src/private-pages.log",
     ),
   };
@@ -608,12 +608,12 @@ for (const [label, transform] of [
   ["missing id", block => block.replace("        id: web_release_fixture_tests\n", "")],
   ["missing recipient env", block => block.replace(/^          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64:.*\n/m, "")],
   ["missing diagnostic path", block => block.replace(/^          SCAI_ENCRYPTED_DIAGNOSTIC_PATH:.*\n/m, "")],
-  ["mismatched diagnostic path", block => block.replace("format('{0}/scai-web-release-fixture-diagnostic.json', runner.temp)", "format('{0}/wrong-diagnostic.json', runner.temp)")],
+  ["mismatched diagnostic path", block => block.replace("format('{0}/scai-web-release-fixture-diagnostic/failure.encrypted.json', runner.temp)", "format('{0}/wrong-diagnostic.json', runner.temp)")],
   ["missing upload", block => block.slice(0, block.indexOf(`      - name: ${webFixtureUploadName}\n`))],
   ["wrong failed step", block => block.replace("steps.web_release_fixture_tests.outcome", "steps.frontend_unit_tests.outcome")],
   ["upload without recipient guard", block => block.replace(" && inputs.diagnostic_public_key_base64 != ''\n", "\n")],
   ["unconditional upload", block => block.replace(/^        if: failure\(\).*$/m, "        if: always()")],
-  ["raw output upload", block => block.replace("path: ${{ runner.temp }}/scai-web-release-fixture-diagnostic.json", "path: src/private-test.log")],
+  ["raw output upload", block => block.replace("path: ${{ runner.temp }}/scai-web-release-fixture-diagnostic/*.encrypted.json", "path: src/private-test.log")],
   ["mutable upload action", block => block.replace("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", "actions/upload-artifact@v4")],
   ["long retention", block => block.replace("retention-days: 1", "retention-days: 90")],
   ["missing envelope tolerated", block => block.replace("if-no-files-found: error", "if-no-files-found: warn")],
@@ -631,12 +631,12 @@ test("Frontend unit diagnostics require the supplied key and exact encrypted env
       "if: failure() && steps.frontend_unit_tests.outcome == 'failure'",
     ),
     fixtures["pr-check.yml"].replace(
-      "path: ${{ runner.temp }}/scai-frontend-unit-diagnostic.json",
+      "path: ${{ runner.temp }}/scai-frontend-unit-diagnostic/*.encrypted.json",
       "path: src/private-frontend-unit.log",
     ),
     fixtures["pr-check.yml"].replace(
-      "SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}",
-      "SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64:",
+      meetStep("Frontend-Vertragstests ausführen"),
+      meetStep("Frontend-Vertragstests ausführen").replace("SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}", "SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64:"),
     ),
     fixtures["pr-check.yml"].replace(
       "if: failure() && steps.frontend_unit_tests.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''",
@@ -705,7 +705,7 @@ test("Sentinel CRM diagnostics cannot upload plaintext or a source-tree path", (
   const unsafe = {
     ...fixtures,
     "pr-check.yml": fixtures["pr-check.yml"].replace(
-      "path: ${{ runner.temp }}/scai-sentinel-crm-diagnostic.json",
+      "path: ${{ runner.temp }}/scai-sentinel-crm-diagnostic/*.encrypted.json",
       "path: src/private-sentinel-crm.log",
     ),
   };
@@ -719,7 +719,7 @@ test("Sentinel Routing failures require a one-time-key envelope, never plaintext
   const missingKey = {
     ...fixtures,
     "pr-check.yml": fixtures["pr-check.yml"].replace(
-      "SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-sentinel-routing-diagnostic.json', runner.temp) || '' }}",
+      "SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-sentinel-routing-diagnostic/failure.encrypted.json', runner.temp) || '' }}",
       "SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ''",
     ),
   };
@@ -731,7 +731,7 @@ test("Sentinel Routing failures require a one-time-key envelope, never plaintext
   const plaintext = {
     ...fixtures,
     "pr-check.yml": fixtures["pr-check.yml"].replace(
-      "path: ${{ runner.temp }}/scai-sentinel-routing-diagnostic.json",
+      "path: ${{ runner.temp }}/scai-sentinel-routing-diagnostic/*.encrypted.json",
       "path: src/private-sentinel-routing.log",
     ),
   };
@@ -809,9 +809,9 @@ test("Workspace browser harnesses are an atomic confidential gate", () => {
 
 test("Workspace and Call diagnostics require the supplied key and the three exact encrypted envelopes", () => {
   for (const [stepId, diagnosticName, expected] of [
-    ["workspace_tabs_proof", "scai-workspace-tabs-diagnostic.json", /Workspace tab diagnostics/],
-    ["workspace_app_plugins_proof", "scai-workspace-app-plugins-diagnostic.json", /Workspace app-plugin diagnostics/],
-    ["subunit_call_proof", "scai-subunit-call-diagnostic.json", /Subunit Call diagnostics/],
+    ["workspace_tabs_proof", "scai-workspace-tabs-diagnostic/*.encrypted.json", /Workspace tab diagnostics/],
+    ["workspace_app_plugins_proof", "scai-workspace-app-plugins-diagnostic/*.encrypted.json", /Workspace app-plugin diagnostics/],
+    ["subunit_call_proof", "scai-subunit-call-diagnostic/*.encrypted.json", /Subunit Call diagnostics/],
   ]) {
     const missingKeyGuard = {
       ...fixtures,
@@ -829,7 +829,7 @@ test("Workspace and Call diagnostics require the supplied key and the three exac
       ...fixtures,
       "pr-check.yml": fixtures["pr-check.yml"].replace(
         `path: \${{ runner.temp }}/${diagnosticName}`,
-        `path: src/private-${diagnosticName.replace("-diagnostic.json", ".log")}`,
+        `path: src/private-${diagnosticName.replace("/*.encrypted.json", ".log")}`,
       ),
     };
     assert.match(
@@ -841,7 +841,7 @@ test("Workspace and Call diagnostics require the supplied key and the three exac
       ...fixtures,
       "pr-check.yml": fixtures["pr-check.yml"].replace(
         `path: \${{ runner.temp }}/${diagnosticName}`,
-        `path: \${{ runner.temp }}/${diagnosticName.replace("-diagnostic.json", "/")}`,
+        `path: \${{ runner.temp }}/${diagnosticName.replace("*.encrypted.json", "*")}`,
       ),
     };
     assert.match(
@@ -1024,8 +1024,8 @@ test("Workforce Inbox proof remains optional, isolated, and confidential", () =>
 
 test("Revenue diagnostics cannot upload plaintext or a source-tree path", () => {
   for (const [safePath, unsafePath, expected] of [
-    ["${{ runner.temp }}/scai-revenue-billing-diagnostic.json", "src/private-billing.log", /Billing Revenue diagnostics/],
-    ["${{ runner.temp }}/scai-revenue-offers-diagnostic.json", "src/private-offers.log", /Offers Revenue diagnostics/],
+    ["${{ runner.temp }}/scai-revenue-billing-diagnostic/*.encrypted.json", "src/private-billing.log", /Billing Revenue diagnostics/],
+    ["${{ runner.temp }}/scai-revenue-offers-diagnostic/*.encrypted.json", "src/private-offers.log", /Offers Revenue diagnostics/],
   ]) {
     const unsafe = {
       ...fixtures,
@@ -1039,7 +1039,7 @@ test("Workgraph diagnostics cannot upload plaintext or a source-tree path", () =
   const unsafe = {
     ...fixtures,
     "pr-check.yml": fixtures["pr-check.yml"].replace(
-      "path: ${{ runner.temp }}/scai-workgraph-blackbox-diagnostic.json",
+      "path: ${{ runner.temp }}/scai-workgraph-blackbox-diagnostic/*.encrypted.json",
       "path: src/private-workgraph.log",
     ),
   };
@@ -1053,7 +1053,7 @@ test("Chat-Dock diagnostics cannot upload plaintext or a source-tree path", () =
   const unsafe = {
     ...fixtures,
     "pr-check.yml": fixtures["pr-check.yml"].replace(
-      "path: ${{ runner.temp }}/scai-chat-dock-diagnostic.json",
+      "path: ${{ runner.temp }}/scai-chat-dock-diagnostic/*.encrypted.json",
       "path: src/private-chat-dock.log",
     ),
   };
@@ -1214,7 +1214,7 @@ test('restored mail and capacity contracts cannot silently skip or expose privat
   ['run-confidential.sh" email-full-peek-proof','echo" email-full-peek-proof'],
   ['run-confidential.sh" backoffice-capacity-proof','echo" backoffice-capacity-proof'],
   ["if: failure() && steps.email_full_peek_proof.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''",'if: always()'],
-  ['path: ${{ runner.temp }}/scai-backoffice-capacity-diagnostic.json','path: src/'],
+  ['path: ${{ runner.temp }}/scai-backoffice-capacity-diagnostic/*.encrypted.json','path: src/'],
  ]){
   assert.ok(original.includes(before),before);
   assert.ok(validateSourceConfidentiality({...fixtures,'pr-check.yml':original.replace(before,after)},assetSelector).length>0,before);
@@ -1259,9 +1259,9 @@ for(const [label,before,after] of [
  ['failure ignored','id: frontend_build','id: frontend_build\n        continue-on-error: true'],
  ['proof skipped','id: frontend_build','id: frontend_build\n        if: false'],
  ['wrapper skipped','run-confidential.sh" frontend-build','echo" frontend-build'],
- ['raw upload','path: ${{ runner.temp }}/scai-frontend-build-diagnostic.json','path: src/'],
+ ['raw upload','path: ${{ runner.temp }}/scai-frontend-build-diagnostic/*.encrypted.json','path: src/'],
  ['success upload',"if: failure() && steps.frontend_build.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''",'if: always()'],
- ['key missing',"format('{0}/scai-frontend-build-diagnostic.json', runner.temp)","format('{0}/wrong-diagnostic.json', runner.temp)"],
+ ['key missing',"format('{0}/scai-frontend-build-diagnostic/failure.encrypted.json', runner.temp)","format('{0}/wrong-diagnostic.json', runner.temp)"],
  ['upload failure ignored','- name: Verschlüsselte Frontend-Build-Fehlerdiagnostik bereitstellen','- name: Verschlüsselte Frontend-Build-Fehlerdiagnostik bereitstellen\n        continue-on-error: true'],
 ])test(`frontend build diagnostic rejects ${label}`,()=>{
  const original=fixtures['pr-check.yml'];assert.ok(original.includes(before));assert.ok(validateSourceConfidentiality({...fixtures,'pr-check.yml':original.replace(before,after)},assetSelector).some(e=>e.includes('Frontend build diagnostics')));
@@ -1271,9 +1271,9 @@ for(const [label,before,after] of [
  ['failure ignored','id: cargo_test','id: cargo_test\n        continue-on-error: true'],
  ['proof skipped','id: cargo_test','id: cargo_test\n        if: false'],
  ['wrapper skipped','run-confidential.sh" cargo-test','echo" cargo-test'],
- ['raw upload','path: ${{ runner.temp }}/scai-cargo-test-diagnostic.json','path: src/'],
+ ['raw upload','path: ${{ runner.temp }}/scai-cargo-test-diagnostic/*.encrypted.json','path: src/'],
  ['success upload',"if: failure() && steps.cargo_test.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''",'if: always()'],
- ['key missing',"format('{0}/scai-cargo-test-diagnostic.json', runner.temp)","format('{0}/wrong-diagnostic.json', runner.temp)"],
+ ['key missing',"format('{0}/scai-cargo-test-diagnostic/failure.encrypted.json', runner.temp)","format('{0}/wrong-diagnostic.json', runner.temp)"],
  ['upload failure ignored','- name: Verschlüsselte Cargo-Test-Fehlerdiagnostik bereitstellen','- name: Verschlüsselte Cargo-Test-Fehlerdiagnostik bereitstellen\n        continue-on-error: true'],
 ])test(`cargo test diagnostic rejects ${label}`,()=>{
  const original=fixtures['pr-check.yml'];assert.ok(original.includes(before));assert.ok(validateSourceConfidentiality({...fixtures,'pr-check.yml':original.replace(before,after)},assetSelector).some(e=>e.includes('Cargo test diagnostics')));
@@ -1405,4 +1405,109 @@ test('Atlas diagnostics remain encrypted and bound to the exact failed suite',()
  ]){
   const changed={...fixtures,'atlas-pr-check.yml':mutate(fixtures['atlas-pr-check.yml'])};assert.notEqual(validateSourceConfidentiality(changed,assetSelector).length,0,label);
  }
+});
+
+
+const diagnosticSteps = fixtures["pr-check.yml"].split(/^      - name: /m)
+  .filter(step => step.includes("run-confidential.sh"));
+test("every actual confidential step has complete diagnostics, including every former blind sibling", () => {
+  assert.equal(diagnosticSteps.length, 49);
+  assert.deepEqual(validatePrDiagnosticInventory(fixtures["pr-check.yml"]), []);
+  for (const step of diagnosticSteps) {
+    const id = step.match(/^        id: (.+)$/m)?.[1];
+    assert.ok(id);
+    const directory = step.match(/format\('\{0\}\/([^/]+)\/failure\.encrypted\.json'/)?.[1];
+    assert.ok(directory);
+    const upload = fixtures["pr-check.yml"].split(/^      - name: /m)
+      .find(block => block.includes(`path: \${{ runner.temp }}/${directory}/*.encrypted.json`));
+    assert.ok(upload);
+    for (const [label, before, after] of [
+      ["missing key", step, step.replace(/^          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64:.*\n/m, "")],
+      ["missing path", step, step.replace(/^          SCAI_ENCRYPTED_DIAGNOSTIC_PATH:.*\n/m, "")],
+      ["missing upload", `      - name: ${upload}`, ""],
+    ]) {
+      const mutant = fixtures["pr-check.yml"].replace(before, after);
+      assert.notEqual(mutant, fixtures["pr-check.yml"], `${id}: ${label} applied`);
+      assert.match(validatePrDiagnosticInventory(mutant).join("\n"), /diagnostic inventory:/, `${id}: ${label}`);
+    }
+  }
+});
+
+const inventoryMutations = [
+  ["new blind step", text => text.replace("      - name: Abhängigkeiten installieren", '      - name: New confidential contract\n        shell: bash\n        run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" future-proof node future-proof.mjs\n\n      - name: Abhängigkeiten installieren')],
+  ["quoted upload key", text => text.replace("uses: actions/upload-artifact@", '\"uses\": actions/upload-artifact@')],
+  ["quoted upload value", text => text.replace("uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable", 'uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"')],
+  ["aliased step", text => text.replace("      - name: Abhängigkeiten installieren", "      - *hidden-upload\n\n      - name: Abhängigkeiten installieren")],
+  ["duplicate action mapping", text => text.replace("uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable", "uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable\n        uses: actions/upload-artifact@v4")],
+  ["extra quoted-key upload", text => text.replace("      - name: Abhängigkeiten installieren", '      - name: Hidden broad upload\n        "uses": actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: hidden-${{ github.run_id }}\n          path: ${{ runner.temp }}/scai-npm-ci-diagnostic/*.encrypted.json\n          retention-days: 90\n\n      - name: Abhängigkeiten installieren')],
+  ["extra multiline upload path", text => text.replace("      - name: Abhängigkeiten installieren", '      - name: Hidden multiline upload\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: hidden-${{ github.run_id }}\n          path: |\n            ${{ runner.temp }}/scai-npm-ci-diagnostic\n          retention-days: 90\n\n      - name: Abhängigkeiten installieren')],
+  ["extra quoted path key", text => text.replace("      - name: Abhängigkeiten installieren", '      - name: Hidden quoted path upload\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: hidden-${{ github.run_id }}\n          "path": ${{ runner.temp }}/scai-npm-ci-diagnostic\n          retention-days: 90\n\n      - name: Abhängigkeiten installieren')],
+  ["duplicate upload path", text => text.replace("          path: ${{ runner.temp }}/scai-npm-ci-diagnostic/*.encrypted.json", "          path: ${{ runner.temp }}/scai-npm-ci-diagnostic/*.encrypted.json\n          path: ${{ runner.temp }}/scai-npm-ci-diagnostic")],
+  ["aliased upload mapping", text => text.replace("        with:\n          name: scai-npm-ci-diagnostic-", "        with:\n          <<: *hidden-path\n          name: scai-npm-ci-diagnostic-")],
+  ["quoted upload path value", text => text.replace("path: ${{ runner.temp }}/scai-npm-ci-diagnostic/*.encrypted.json", 'path: "${{ runner.temp }}/scai-npm-ci-diagnostic/*.encrypted.json"')],
+  ["recipient appended suffix", text => text.replace("SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}", "SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}unexpected")],
+  ["recipient nonexact expression", text => text.replace("SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}", "SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 || 'foreign' }}")],
+  ["duplicate env map", text => text.replace("        id: npm_ci\n", "        id: npm_ci\n        env: {}\n")],
+  ["runtime destination shadow", text => text.replace('run-confidential.sh" npm-ci npm ci', 'run-confidential.sh" npm-ci npm ci').replace('        run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" npm-ci', '        run: SCAI_ENCRYPTED_DIAGNOSTIC_PATH= bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" npm-ci')],
+  ["missing unique id", text => text.replace("        id: npm_ci\n", "")],
+  ["duplicate producer id", text => text.replace("        id: plugin_deploy_tests", "        id: npm_ci")],
+  ["foreign step upload", text => text.replace("steps.npm_ci.outcome", "steps.frontend_unit_tests.outcome")],
+  ["missing key upload guard", text => text.replace("if: failure() && steps.npm_ci.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''", "if: failure() && steps.npm_ci.outcome == 'failure'")],
+  ["success upload", text => text.replace("if: failure() && steps.npm_ci.outcome", "if: success() && steps.npm_ci.outcome")],
+  ["missing first or later failures", text => text.replace("path: ${{ runner.temp }}/scai-npm-ci-diagnostic/*.encrypted.json", "path: ${{ runner.temp }}/scai-npm-ci-diagnostic/failure.encrypted.json")],
+  ["raw or other file glob", text => text.replace("path: ${{ runner.temp }}/scai-npm-ci-diagnostic/*.encrypted.json", "path: ${{ runner.temp }}/scai-npm-ci-diagnostic/*")],
+  ["foreign directory glob", text => text.replace("path: ${{ runner.temp }}/scai-npm-ci-diagnostic/*.encrypted.json", "path: ${{ runner.temp }}/**/*.encrypted.json")],
+  ["directory traversal", text => text.replaceAll("scai-npm-ci-diagnostic/", "../scai-npm-ci-diagnostic/")],
+  ["shared directory", text => text.replaceAll("scai-plugin-deploy-tests-diagnostic", "scai-npm-ci-diagnostic")],
+  ["missing private initialization", text => text.replace('          mkdir "$RUNNER_TEMP/scai-npm-ci-diagnostic"\n', "")],
+  ["reused directory allowed", text => text.replace('mkdir "$RUNNER_TEMP/scai-npm-ci-diagnostic"', 'mkdir -p "$RUNNER_TEMP/scai-npm-ci-diagnostic"')],
+  ["world-readable directory", text => text.replace("umask 077", "umask 022")],
+  ["mutable action", text => text.replace("uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable", "uses: actions/upload-artifact@v4")],
+  ["missing envelope accepted", text => text.replace("if-no-files-found: error", "if-no-files-found: warn")],
+  ["long retention", text => text.replace("retention-days: 1", "retention-days: 14")],
+  ["macOS recipient disabled", text => text.replace("id: trace_native_check", "id: trace_native_check").replace("format('{0}/trace-native-diagnostic/failure.encrypted.json'", "matrix.label == 'windows-x64' && format('{0}/trace-native-diagnostic/failure.encrypted.json'")],
+  ["matrix artifact collision", text => text.replace("name: trace-native-encrypted-diagnostic-${{ matrix.label }}-", "name: trace-native-encrypted-diagnostic-")],
+  ["non-diagnostic artifact collision", text => text.replace("name: scai-pages-encrypted-shots-", "name: scai-npm-ci-diagnostic-")],
+  ["job artifact collision", text => text.replace("name: scai-plugin-deploy-tests-diagnostic-", "name: scai-npm-ci-diagnostic-")],
+  ["wrapper outside canonical steps", text => text + '\n  hidden: { steps: [{run: bash run-confidential.sh hidden true}] }\n'],
+];
+for (const [label, mutate] of inventoryMutations) test(`dynamic confidential inventory rejects ${label}`, () => {
+  const changed = mutate(fixtures["pr-check.yml"]);
+  assert.notEqual(changed, fixtures["pr-check.yml"]);
+  assert.match(validatePrDiagnosticInventory(changed).join("\n"), /diagnostic inventory:/);
+  assert.match(validateSourceConfidentiality({ ...fixtures, "pr-check.yml": changed }, assetSelector).join("\n"), /diagnostic inventory:/,
+    "the actual public preflight validator must invoke the dynamic inventory guard");
+});
+
+
+test("a fully wired future confidential step is accepted without changing an inventory allowlist", () => {
+  const source = fixtures["pr-check.yml"];
+  const producer = '      - name: ' + meetStep("Abhängigkeiten installieren");
+  const upload = '      - name: ' + meetStep("Verschlüsselte npm-ci-Fehlerdiagnostik bereitstellen");
+  const clone = (producer + upload).replaceAll('npm-ci', 'future-contract').replaceAll('npm_ci', 'future_contract').replace('Abhängigkeiten installieren', 'Future contract');
+  const expanded = source.replace(upload, upload + clone)
+    .replace('          mkdir "$RUNNER_TEMP/scai-npm-ci-diagnostic"', '          mkdir "$RUNNER_TEMP/scai-npm-ci-diagnostic"\n          mkdir "$RUNNER_TEMP/scai-future-contract-diagnostic"');
+  assert.deepEqual(validatePrDiagnosticInventory(expanded), []);
+});
+
+test("every diagnostic initialization actually creates mode-0700 exclusive directories and rejects reuse", () => {
+  const setups = fixtures["pr-check.yml"].split(/^      - name: /m)
+    .filter(step => step.startsWith('Exklusive verschlüsselte Diagnoseordner vorbereiten\n'));
+  assert.equal(setups.length, 3);
+  for (const setup of setups) {
+    const temp = mkdtempSync(join(tmpdir(), 'scai-diagnostic-directory-'));
+    try {
+      const script = setup.split('        run: |\n')[1].split('\n').filter(line => !line.trimStart().startsWith('#')).map(line => line.replace(/^          /, '')).join('\n');
+      const run = () => spawnSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, RUNNER_TEMP: temp } });
+      const first = run();
+      assert.ifError(first.error);
+      assert.equal(first.status, 0, first.stderr);
+      const names = readdirSync(temp);
+      assert.equal(names.length, (script.match(/mkdir /g) ?? []).length);
+      for (const name of names) assert.equal(statSync(join(temp, name)).mode & 0o777, 0o700);
+      const reused = run();
+      assert.ifError(reused.error);
+      assert.notEqual(reused.status, 0, 'existing directories must fail closed');
+    } finally { rmSync(temp, { recursive: true, force: true }); }
+  }
 });
