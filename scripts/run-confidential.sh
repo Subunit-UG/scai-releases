@@ -88,7 +88,10 @@ else
 const { linkSync } = require('node:fs');
 const [sealed, base, label] = process.argv.slice(2);
 for (let index = 0; ; index += 1) {
-  const output = index === 0 ? base : `${base.slice(0, -5)}-${label}-${index}.json`;
+  // Keep the encrypted suffix discoverable by a step-scoped *.encrypted.json
+  // upload, while preserving legacy .json collision names byte-for-byte.
+  const suffix = base.endsWith('.encrypted.json') ? '.encrypted.json' : '.json';
+  const output = index === 0 ? base : `${base.slice(0, -suffix.length)}-${label}-${index}${suffix}`;
   try { linkSync(sealed, output); break; }
   catch (error) { if (error.code !== 'EEXIST') process.exit(70); }
 }

@@ -160,10 +160,70 @@ jobs:
           cache: npm
           cache-dependency-path: src/package-lock.json
 
+      - name: Exklusive verschlüsselte Diagnoseordner vorbereiten
+        if: inputs.diagnostic_public_key_base64 != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir "$RUNNER_TEMP/scai-npm-ci-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-frontend-unit-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-web-release-fixture-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-plugin-deploy-tests-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-cli-drift-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-release-meta-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-plugin-bundles-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-no-demo-data-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-frontend-build-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-playwright-install-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-browser-security-proof-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-subunit-call-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-email-full-peek-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-backoffice-capacity-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-agents-os-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-workforce-coordination-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-migration-host-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-radar-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-native-usage-core-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-revenue-proof-dependencies-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-revenue-billing-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-revenue-offers-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-workgraph-blackbox-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-moco-parity-proof-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-workforce-capacity-proof-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-workforce-inbox-proof-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-revenue-proof-artifacts-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-support-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-pages-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-host-restore-webkit-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-meet-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-aenderungsjournal-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-chat-dock-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-sentinel-crm-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-sentinel-forecast-proof-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-sentinel-routing-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-workspace-tabs-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-workspace-app-plugins-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-cargo-test-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-agent-hook-test-diagnostic"
+
       - name: Abhängigkeiten installieren
+        id: npm_ci
         working-directory: src
         shell: bash
+        env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-npm-ci-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" npm-ci npm ci
+
+      - name: Verschlüsselte npm-ci-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.npm_ci.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: scai-npm-ci-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/scai-npm-ci-diagnostic/*.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Frontend-Vertragstests ausführen
         id: frontend_unit_tests
@@ -171,7 +231,7 @@ jobs:
         shell: bash
         env:
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-frontend-unit-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-frontend-unit-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" frontend-unit-tests bun test src/lib
 
       - name: Verschlüsselte Frontend-Vertragstest-Fehlerdiagnostik bereitstellen
@@ -179,7 +239,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-frontend-unit-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-frontend-unit-diagnostic.json
+          path: ${{ runner.temp }}/scai-frontend-unit-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -189,7 +249,7 @@ jobs:
         shell: bash
         env:
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-web-release-fixture-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-web-release-fixture-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" web-release-fixture-tests npm run test:web
 
       - name: Verschlüsselte Web-/Release-Fixture-Fehlerdiagnostik bereitstellen
@@ -197,38 +257,81 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-web-release-fixture-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-web-release-fixture-diagnostic.json
+          path: ${{ runner.temp }}/scai-web-release-fixture-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
       - name: Plugin-Deploy-Snapshot und Fehlergrenzen prüfen
+        id: plugin_deploy_tests
         working-directory: src
         shell: bash
+        env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-plugin-deploy-tests-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" plugin-deploy-tests npm run test:plugin-deploy
 
       # Vendored subunit-CLI muss mit Manifest/Signing-Key/Bundle-Wiring synchron
       # bleiben — schlägt bei veraltetem/handgepatchtem Vendor fehl.
+      - name: Verschlüsselte plugin-deploy-tests-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.plugin_deploy_tests.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: scai-plugin-deploy-tests-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/scai-plugin-deploy-tests-diagnostic/*.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
+
       - name: CLI-Drift-Wächter
+        id: cli_drift
         working-directory: src
         shell: bash
+        env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-cli-drift-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" cli-drift npm run drift-guard
 
       # Release-Meta: EINE Version in allen 5 Dateien + Changelog-Eintrag für sie.
       # Ohne den Eintrag bleibt das „Was ist neu"-Popup nach dem Update leer (genau
       # das passierte bei v0.16.0). Beim Lesen des Diffs sieht man das nicht — die
       # Maschine schon.
+      - name: Verschlüsselte cli-drift-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.cli_drift.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: scai-cli-drift-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/scai-cli-drift-diagnostic/*.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Release-Meta-Wächter
+        id: release_meta
         working-directory: src
         shell: bash
+        env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-release-meta-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" release-meta npm run check:release-meta
 
       # Jedes Plugin muss als eigenständiges Bundle bauen. Der App-Build (vite) deckt
       # das NICHT ab: die Plugin-Bundles laufen durch esbuild mit anderen Defines.
       # Gemessen: eine neue `import.meta.env.PROD`-Nutzung in lib/config.ts ließ den
       # chat-Bau scheitern — bemerkt erst beim Publish, und der ganze Release-Zug stand.
+      - name: Verschlüsselte release-meta-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.release_meta.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: scai-release-meta-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/scai-release-meta-diagnostic/*.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Plugin-Bundles bauen (Probe)
+        id: plugin_bundles
         working-directory: src
         shell: bash
+        env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-plugin-bundles-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" plugin-bundles npm run check:plugins
 
       # SCAI wurde als Demo gebaut und wird als Enterprise-Produkt verkauft. Seeds
@@ -236,10 +339,32 @@ jobs:
       # einsickern. Der Wächter hängt bewusst HIER und nicht nur im Quell-Repo: dessen
       # Actions sind billing-gesperrt (jeder Lauf stirbt nach ~4 s mit 0 Steps), der Step
       # dort läuft also nie. Diese Pipeline ist die einzige, die wirklich prüft.
+      - name: Verschlüsselte plugin-bundles-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.plugin_bundles.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: scai-plugin-bundles-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/scai-plugin-bundles-diagnostic/*.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Keine Demo-Daten im Produktcode
+        id: no_demo_data
         working-directory: src
         shell: bash
+        env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-no-demo-data-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" no-demo-data npm run check:no-demo-data
+
+      - name: Verschlüsselte no-demo-data-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.no_demo_data.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: scai-no-demo-data-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/scai-no-demo-data-diagnostic/*.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Bauen (tsc + vite)
         id: frontend_build
@@ -247,7 +372,7 @@ jobs:
         shell: bash
         env:
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-frontend-build-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-frontend-build-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" frontend-build npm run build
 
       - name: Verschlüsselte Frontend-Build-Fehlerdiagnostik bereitstellen
@@ -255,18 +380,35 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-frontend-build-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-frontend-build-diagnostic.json
+          path: ${{ runner.temp }}/scai-frontend-build-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
       - name: Browser für Seh-Harnesse
+        id: playwright_install
         working-directory: src
         shell: bash
+        env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-playwright-install-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" playwright-install npx playwright install --with-deps chromium webkit
 
+      - name: Verschlüsselte playwright-install-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.playwright_install.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: scai-playwright-install-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/scai-playwright-install-diagnostic/*.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Sicherheitsgrenzen in Browser und Plugin-Bundles beweisen
+        id: browser_security_proof
         working-directory: src
         shell: bash
+        env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-browser-security-proof-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: |
           set -euo pipefail
           if [ -f scripts/plugins/maplibre-sanitizer.test.mjs ] || [ -f scripts/plugins/media-viewer.test.mjs ]; then
@@ -276,6 +418,15 @@ jobs:
       # Der öffentliche Runner entwickelt sich unabhängig vom privaten Source-Repo.
       # Neue Feature-Proofs dürfen ältere/offene Source-Refs nicht rückwirkend brechen;
       # sobald das Harness im angeforderten Ref existiert, bleibt der Proof strikt.
+      - name: Verschlüsselte browser-security-proof-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.browser_security_proof.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: scai-browser-security-proof-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/scai-browser-security-proof-diagnostic/*.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Optionale Source-Proofs erkennen
         id: source_proofs
         working-directory: src
@@ -376,7 +527,7 @@ jobs:
         shell: bash
         env:
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-subunit-call-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-subunit-call-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" subunit-call-proof node scripts/verify-subunit-call.mjs
 
       - name: Verschlüsselte Subunit-Call-Fehlerdiagnostik bereitstellen
@@ -384,7 +535,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-subunit-call-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-subunit-call-diagnostic.json
+          path: ${{ runner.temp }}/scai-subunit-call-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -396,7 +547,7 @@ jobs:
         env:
           SCAI_TOOLCHAIN: ${{ github.workspace }}/src
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-email-full-peek-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-email-full-peek-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" email-full-peek-proof node scripts/verify-email-full-peek.mjs
 
       - name: Verschluesselte email-full-peek Fehlerdiagnostik bereitstellen
@@ -404,7 +555,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-email-full-peek-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-email-full-peek-diagnostic.json
+          path: ${{ runner.temp }}/scai-email-full-peek-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -416,7 +567,7 @@ jobs:
         env:
           SCAI_TOOLCHAIN: ${{ github.workspace }}/src
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-backoffice-capacity-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-backoffice-capacity-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" backoffice-capacity-proof node scripts/verify-backoffice-capacity-list.mjs
 
       - name: Verschluesselte backoffice-capacity Fehlerdiagnostik bereitstellen
@@ -424,7 +575,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-backoffice-capacity-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-backoffice-capacity-diagnostic.json
+          path: ${{ runner.temp }}/scai-backoffice-capacity-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -436,7 +587,7 @@ jobs:
         env:
           SCAI_TOOLCHAIN: ${{ github.workspace }}/src
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-agents-os-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-agents-os-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" agents-os-proof bash "$GITHUB_WORKSPACE/gate/scripts/run-agents-os-proof.sh"
 
       - name: Verschluesselte agents-os Fehlerdiagnostik bereitstellen
@@ -444,7 +595,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-agents-os-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-agents-os-diagnostic.json
+          path: ${{ runner.temp }}/scai-agents-os-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -465,7 +616,7 @@ jobs:
         env:
           SCAI_TOOLCHAIN: ${{ github.workspace }}/src
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-workforce-coordination-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-workforce-coordination-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" workforce-coordination-proof bash "$GITHUB_WORKSPACE/gate/scripts/run-workforce-coordination-proof.sh"
 
       - name: Verschluesselte workforce-coordination Fehlerdiagnostik bereitstellen
@@ -473,7 +624,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-workforce-coordination-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-workforce-coordination-diagnostic.json
+          path: ${{ runner.temp }}/scai-workforce-coordination-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -494,7 +645,7 @@ jobs:
         env:
           SCAI_TOOLCHAIN: ${{ github.workspace }}/src
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-migration-host-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-migration-host-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" migration-host-proof bash "$GITHUB_WORKSPACE/gate/scripts/run-migration-host-proof.sh"
 
       - name: Verschluesselte migration-host Fehlerdiagnostik bereitstellen
@@ -502,7 +653,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-migration-host-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-migration-host-diagnostic.json
+          path: ${{ runner.temp }}/scai-migration-host-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -525,7 +676,7 @@ jobs:
           REQUEST_ID: ${{ needs.preflight.outputs.request_id }}
           SCAI_TOOLCHAIN: ${{ github.workspace }}/src
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-radar-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-radar-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" radar-proof bash "$GITHUB_WORKSPACE/gate/scripts/run-radar-proof.sh"
 
       - name: Verschluesselte radar Fehlerdiagnostik bereitstellen
@@ -533,7 +684,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-radar-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-radar-diagnostic.json
+          path: ${{ runner.temp }}/scai-radar-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -554,7 +705,7 @@ jobs:
         env:
           SCAI_TOOLCHAIN: ${{ github.workspace }}/src
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-native-usage-core-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-native-usage-core-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" native-usage-core-proof bash "$GITHUB_WORKSPACE/gate/scripts/run-native-usage-core-proof.sh"
 
       - name: Verschluesselte native-usage-core Fehlerdiagnostik bereitstellen
@@ -562,7 +713,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-native-usage-core-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-native-usage-core-diagnostic.json
+          path: ${{ runner.temp }}/scai-native-usage-core-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -571,9 +722,21 @@ jobs:
         if: steps.source_proofs.outputs.revenue_browser == 'true' || steps.source_proofs.outputs.workgraph_blackbox == 'true'
         working-directory: src
         shell: bash
+        env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-revenue-proof-dependencies-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: |
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" revenue-proof-dependencies npx --no-install playwright --version
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" revenue-proof-esbuild npx --no-install esbuild --version
+
+      - name: Verschlüsselte revenue-proof-dependencies-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.revenue_proof_dependencies.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: scai-revenue-proof-dependencies-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/scai-revenue-proof-dependencies-diagnostic/*.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Billing produktionsnah visuell und interaktiv beweisen
         id: billing_revenue_proof
@@ -584,7 +747,7 @@ jobs:
           PROOF_RUN_ID: ci
           SCAI_BILLING_PROOF_DIR: ${{ runner.temp }}/scai-revenue-source-shots/billing
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-revenue-billing-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-revenue-billing-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" billing-production-proof node scripts/verify-billing-production.mjs
 
       - name: Angebote v0.1 visuell und interaktiv beweisen
@@ -596,7 +759,7 @@ jobs:
           PROOF_RUN_ID: ci
           SCAI_OFFERS_PROOF_DIR: ${{ runner.temp }}/scai-revenue-source-shots/offers
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-revenue-offers-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-revenue-offers-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" offers-v01-proof node scripts/verify-offers-v01.mjs
 
       - name: Workgraph Blackbox visuell und interaktiv beweisen
@@ -606,32 +769,68 @@ jobs:
         shell: bash
         env:
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-workgraph-blackbox-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-workgraph-blackbox-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" workgraph-blackbox-proof node scripts/verify-workgraph-blackbox.mjs
 
       - name: MOCO-Paritaetsprotokoll visuell und interaktiv beweisen
+        id: moco_parity_proof
         if: steps.source_proofs.outputs.moco_parity == 'true'
         working-directory: src
         shell: bash
         env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-moco-parity-proof-diagnostic/failure.encrypted.json', runner.temp) || '' }}
           MOCO_PARITY_PROOF_OUT: ${{ runner.temp }}/scai-moco-parity-proof
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" moco-parity-proof node scripts/verify-moco-parity.mjs
 
+      - name: Verschlüsselte moco-parity-proof-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.moco_parity_proof.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: scai-moco-parity-proof-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/scai-moco-parity-proof-diagnostic/*.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Workforce-Kapazität und Abwesenheit visuell beweisen
+        id: workforce_capacity_proof
         if: always() && steps.source_proofs.outputs.workforce_capacity == 'true'
         working-directory: src
         shell: bash
         env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-workforce-capacity-proof-diagnostic/failure.encrypted.json', runner.temp) || '' }}
           SCAI_WORKFORCE_CAPACITY_PROOF_DIR: ${{ runner.temp }}/scai-workforce-capacity-proof
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" workforce-capacity-proof node scripts/verify-workforce-capacity-overlays.mjs
 
+      - name: Verschlüsselte workforce-capacity-proof-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.workforce_capacity_proof.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: scai-workforce-capacity-proof-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/scai-workforce-capacity-proof-diagnostic/*.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Persönliche Workforce-Inbox und Übergaben visuell beweisen
+        id: workforce_inbox_proof
         if: always() && steps.source_proofs.outputs.workforce_inbox == 'true'
         working-directory: src
         shell: bash
         env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-workforce-inbox-proof-diagnostic/failure.encrypted.json', runner.temp) || '' }}
           SCAI_WORKFORCE_INBOX_PROOF_DIR: ${{ runner.temp }}/scai-workforce-inbox-proof
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" workforce-inbox-proof node scripts/verify-workforce-inbox.mjs
+
+      - name: Verschlüsselte workforce-inbox-proof-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.workforce_inbox_proof.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: scai-workforce-inbox-proof-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/scai-workforce-inbox-proof-diagnostic/*.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Revenue-Fixture-Screenshots geschlossen prüfen
         id: revenue_artifacts
@@ -639,6 +838,8 @@ jobs:
         working-directory: src
         shell: bash
         env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-revenue-proof-artifacts-diagnostic/failure.encrypted.json', runner.temp) || '' }}
           BILLING_PROOF_DIR: ${{ runner.temp }}/scai-revenue-source-shots/billing
           OFFERS_PROOF_DIR: ${{ runner.temp }}/scai-revenue-source-shots/offers
           REVENUE_ARTIFACT_DIR: ${{ runner.temp }}/scai-revenue-browser-proof
@@ -652,6 +853,15 @@ jobs:
           else
             bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" revenue-proof-artifacts node "$GITHUB_WORKSPACE/gate/scripts/verify-revenue-proof-artifacts.mjs" --workgraph-only "$HOME/.cache/u1-shots/scai-workgraph-blackbox" "$REVENUE_ARTIFACT_DIR"
           fi
+
+      - name: Verschlüsselte revenue-proof-artifacts-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.revenue_artifacts.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: scai-revenue-proof-artifacts-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/scai-revenue-proof-artifacts-diagnostic/*.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Revenue-Browser-Proof-Screenshots verschlüsseln (öffentliches Repo, nie Klartext)
         id: revenue_browser_seal
@@ -683,7 +893,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-revenue-billing-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-revenue-billing-diagnostic.json
+          path: ${{ runner.temp }}/scai-revenue-billing-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -692,7 +902,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-revenue-offers-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-revenue-offers-diagnostic.json
+          path: ${{ runner.temp }}/scai-revenue-offers-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -701,7 +911,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-workgraph-blackbox-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-workgraph-blackbox-diagnostic.json
+          path: ${{ runner.temp }}/scai-workgraph-blackbox-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -712,7 +922,7 @@ jobs:
         shell: bash
         env:
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-support-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-support-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" support-diagnostics-proof node scripts/verify-support-diagnostics.mjs
 
       - name: Diagnosepaket-Proof-Screenshots vorhanden
@@ -752,7 +962,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-support-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-support-diagnostic.json
+          path: ${{ runner.temp }}/scai-support-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -762,7 +972,7 @@ jobs:
         shell: bash
         env:
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-pages-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-pages-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" pages-recovery-proof node scripts/verify-pages-foundation.mjs
 
       - name: Pages-Proof-Screenshots vorhanden
@@ -800,7 +1010,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-pages-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-pages-diagnostic.json
+          path: ${{ runner.temp }}/scai-pages-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -813,7 +1023,7 @@ jobs:
           PAGES_PROOF_FOCUS: host-restore
           PAGES_PROOF_OUT: ${{ runner.temp }}/scai-host-restore-webkit
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-host-restore-webkit-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-host-restore-webkit-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" host-restore-webkit-proof node scripts/verify-pages-foundation.mjs
 
       - name: Verschlüsselte WebKit-Host-Restore-Fehlerdiagnostik bereitstellen
@@ -821,7 +1031,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-host-restore-webkit-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-host-restore-webkit-diagnostic.json
+          path: ${{ runner.temp }}/scai-host-restore-webkit-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -831,7 +1041,7 @@ jobs:
         env:
           PROOF_RUN_ID: ci
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-meet-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-meet-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         shell: bash
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" meet-visual-proof node scripts/verify-meet-plugin.mjs
 
@@ -869,7 +1079,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-meet-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-meet-diagnostic.json
+          path: ${{ runner.temp }}/scai-meet-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -882,7 +1092,7 @@ jobs:
         env:
           PROOF_RUN_ID: ci
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-aenderungsjournal-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-aenderungsjournal-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         shell: bash
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" aenderungsjournal-proof node scripts/verify-aenderungsjournal.mjs
 
@@ -916,7 +1126,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-aenderungsjournal-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-aenderungsjournal-diagnostic.json
+          path: ${{ runner.temp }}/scai-aenderungsjournal-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -926,7 +1136,7 @@ jobs:
         working-directory: src
         env:
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-chat-dock-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-chat-dock-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         shell: bash
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" chat-dock-visual-proof npm run proof:chat-dock
 
@@ -965,7 +1175,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-chat-dock-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-chat-dock-diagnostic.json
+          path: ${{ runner.temp }}/scai-chat-dock-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -976,7 +1186,7 @@ jobs:
         shell: bash
         env:
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-sentinel-crm-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-sentinel-crm-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" sentinel-crm-proof npm run proof:sentinel-crm
 
       - name: Sentinel-CRM-Proof-Screenshots vorhanden
@@ -1014,7 +1224,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-sentinel-crm-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-sentinel-crm-diagnostic.json
+          path: ${{ runner.temp }}/scai-sentinel-crm-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -1023,7 +1233,19 @@ jobs:
         if: steps.source_proofs.outputs.sentinel_forecast == 'true'
         working-directory: src
         shell: bash
+        env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-sentinel-forecast-proof-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" sentinel-forecast-proof node scripts/verify-sentinel-forecast.mjs
+
+      - name: Verschlüsselte sentinel-forecast-proof-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.forecast_proof.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: scai-sentinel-forecast-proof-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/scai-sentinel-forecast-proof-diagnostic/*.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Sentinel-Forecast-Screenshots vorhanden
         if: always() && steps.forecast_proof.outcome != 'skipped'
@@ -1062,7 +1284,7 @@ jobs:
         shell: bash
         env:
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-sentinel-routing-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-sentinel-routing-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" sentinel-routing-proof node scripts/verify-sentinel-routing.mjs
 
       - name: Sentinel-Routing-Screenshots vorhanden
@@ -1100,7 +1322,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-sentinel-routing-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-sentinel-routing-diagnostic.json
+          path: ${{ runner.temp }}/scai-sentinel-routing-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -1112,7 +1334,7 @@ jobs:
         env:
           SCAI_WORKSPACE_PROOF_OUT: ${{ runner.temp }}/scai-workspace-tabs
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-workspace-tabs-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-workspace-tabs-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" workspace-tabs-proof node scripts/verify-workspace-tabs.mjs
 
       - name: Arbeitsbereich mit App-Modus-Plugins beweisen
@@ -1122,7 +1344,7 @@ jobs:
         shell: bash
         env:
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-workspace-app-plugins-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-workspace-app-plugins-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" workspace-app-plugins-proof node scripts/verify-workspace-app-plugins.mjs
 
       - name: Verschlüsselte Arbeitsbereich-Tabs-Fehlerdiagnostik bereitstellen
@@ -1130,7 +1352,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-workspace-tabs-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-workspace-tabs-diagnostic.json
+          path: ${{ runner.temp }}/scai-workspace-tabs-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -1139,7 +1361,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-workspace-app-plugins-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-workspace-app-plugins-diagnostic.json
+          path: ${{ runner.temp }}/scai-workspace-app-plugins-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -1198,7 +1420,7 @@ jobs:
         shell: bash
         env:
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-cargo-test-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-cargo-test-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" cargo-test cargo test --manifest-path src-tauri/Cargo.toml --lib --features local-meet
 
       # Presence S3 (Quell-Repo docs/presence-wsl-hook.md): Hook-Helfer und sein
@@ -1211,7 +1433,7 @@ jobs:
         shell: bash
         env:
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-agent-hook-test-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-agent-hook-test-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" agent-hook-test cargo test --locked --manifest-path src-tauri/Cargo.toml -p scai-agent-hook -p scai-agent-hook-core --all-features
 
       - name: Verschlüsselte Cargo-Test-Fehlerdiagnostik bereitstellen
@@ -1219,7 +1441,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-cargo-test-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-cargo-test-diagnostic.json
+          path: ${{ runner.temp }}/scai-cargo-test-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -1228,7 +1450,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-agent-hook-test-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-agent-hook-test-diagnostic.json
+          path: ${{ runner.temp }}/scai-agent-hook-test-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -1327,28 +1549,66 @@ jobs:
           vcpkg install "openssl:$env:OPENSSL_TRIPLET"
           "OPENSSL_DIR=$env:VCPKG_INSTALLATION_ROOT\installed\$env:OPENSSL_TRIPLET" >> $env:GITHUB_ENV
 
+      - name: Exklusive verschlüsselte Diagnoseordner vorbereiten
+        if: inputs.diagnostic_public_key_base64 != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir "$RUNNER_TEMP/scai-trace-fmt-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-trace-core-check-diagnostic"
+          mkdir "$RUNNER_TEMP/trace-native-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-trace-macos-app-package-diagnostic"
+
       - name: Formatvertrag prüfen
+        id: trace_fmt
         if: matrix.mode == 'core'
         working-directory: trace-src
         shell: bash
+        env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-trace-fmt-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" trace-fmt cargo fmt -- --check
 
+      - name: Verschlüsselte trace-fmt-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.trace_fmt.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: scai-trace-fmt-diagnostic-${{ matrix.label }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/scai-trace-fmt-diagnostic/*.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Plattformneutralen Core prüfen
+        id: trace_core_check
         if: matrix.mode == 'core'
         working-directory: trace-src
         shell: bash
+        env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-trace-core-check-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: |
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" trace-core-check cargo check --locked
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" trace-core-clippy cargo clippy --locked -- -D warnings
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" trace-core-test cargo test --locked
 
+      - name: Verschlüsselte trace-core-check-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.trace_core_check.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: scai-trace-core-check-diagnostic-${{ matrix.label }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/scai-trace-core-check-diagnostic/*.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Nativen Standalone-Host prüfen
+        id: trace_native_check
         if: matrix.mode == 'native'
         working-directory: trace-src
         shell: bash
         env:
-          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ matrix.label == 'windows-x64' && inputs.diagnostic_public_key_base64 || '' }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ matrix.label == 'windows-x64' && inputs.diagnostic_public_key_base64 != '' && format('{0}/trace-windows-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/trace-native-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: |
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" trace-native-check cargo check --locked --features host --bin trace-host
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" trace-native-clippy cargo clippy --locked --features host --all-targets -- -D warnings
@@ -1372,9 +1632,13 @@ jobs:
       # Wichtig: Dieses private Source-Script läuft VOR dem Import der Signing-Secrets. Danach
       # werden ausschließlich fest im öffentlichen Gate definierte Apple-Werkzeuge ausgeführt.
       - name: Trace-App ohne vertrauliche Codeidentität vorpaketieren
+        id: trace_macos_app_package
         if: matrix.label == 'macos-arm64' && inputs.trace_bundle_public_key_base64 != ''
         working-directory: trace-src
         shell: bash
+        env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-trace-macos-app-package-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: |
           set -euo pipefail
           bundle_root="$RUNNER_TEMP/trace-host-macos-arm64-internal"
@@ -1411,6 +1675,15 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$bundle_root/Trace einrichten.app"
           ln -s "Trace Host.app/Contents/MacOS/trace-host" "$bundle_root/trace-host"
           cp README.md docs/PILOT-RUNBOOK.md "$bundle_root/"
+
+      - name: Verschlüsselte trace-macos-app-package-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.trace_macos_app_package.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: scai-trace-macos-app-package-diagnostic-${{ matrix.label }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/scai-trace-macos-app-package-diagnostic/*.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Interne macOS-Codeidentität für Trace importieren
         if: matrix.label == 'macos-arm64' && inputs.trace_bundle_public_key_base64 != ''
@@ -1503,12 +1776,12 @@ jobs:
             "$RUNNER_TEMP/trace-host-macos-arm64-internal.tar.gz"
           rm -rf "$RUNNER_TEMP/trace-host-macos-arm64-internal"
 
-      - name: Verschlüsselte Trace-Windows-Fehlerdiagnostik bereitstellen
-        if: failure() && matrix.label == 'windows-x64' && inputs.diagnostic_public_key_base64 != ''
+      - name: Verschlüsselte Trace-Native-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.trace_native_check.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
-          name: trace-windows-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/trace-windows-diagnostic.json
+          name: trace-native-encrypted-diagnostic-${{ matrix.label }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/trace-native-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -1608,13 +1881,25 @@ jobs:
 
       # Kein Paket, Tag oder Release: dieses Gate kompiliert exakt die nativen
       # Versandfeatures, damit der private Trace-Pin nicht erst im Release auffällt.
+      - name: Exklusive verschlüsselte Diagnoseordner vorbereiten
+        if: inputs.diagnostic_public_key_base64 != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir "$RUNNER_TEMP/scai-native-cargo-check-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-agent-hook-windows-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-native-product-binary-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-native-pkce-tests-diagnostic"
+          mkdir "$RUNNER_TEMP/scai-native-keyring-smoke-diagnostic"
+
       - name: SCAI mit nativer Trace-/Meet-Engine prüfen
         id: native_cargo_check
         working-directory: src
         shell: bash
         env:
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-native-cargo-check-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-native-cargo-check-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" native-cargo-check cargo check --locked --manifest-path src-tauri/Cargo.toml --features local-meet
 
       - name: Verschlüsselte native Cargo-Check-Fehlerdiagnostik bereitstellen
@@ -1622,7 +1907,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: scai-native-cargo-check-encrypted-diagnostic-${{ matrix.label }}-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-native-cargo-check-diagnostic.json
+          path: ${{ runner.temp }}/scai-native-cargo-check-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
@@ -1636,7 +1921,7 @@ jobs:
         shell: bash
         env:
           SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
-          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-agent-hook-windows-diagnostic.json', runner.temp) || '' }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-agent-hook-windows-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: |
           set -euo pipefail
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" agent-hook-windows-test \
@@ -1659,34 +1944,63 @@ jobs:
         if: failure() && steps.agent_hook_windows.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
-          name: scai-agent-hook-windows-encrypted-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/scai-agent-hook-windows-diagnostic.json
+          name: scai-agent-hook-windows-encrypted-diagnostic-${{ matrix.label }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/scai-agent-hook-windows-diagnostic/*.encrypted.json
           if-no-files-found: error
           retention-days: 1
 
       # Ein zusätzlicher src/bin-Helfer darf nie wieder als Tauri-Produkt im
       # Installer landen. Cargo-Metadata muss exakt subunit-scai aus main.rs zeigen.
       - name: Eindeutiges Produkt-Binary beweisen
+        id: native_product_binary
         working-directory: src
         shell: bash
+        env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-native-product-binary-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" native-product-binary node "$GITHUB_WORKSPACE/gate/scripts/verify-product-binary.mjs" src-tauri/Cargo.toml
 
       # A1 / Native Auth: Ein Linux-Erfolg reicht nicht als Beweis für den
       # ausgelieferten Desktop-Pfad. Derselbe gepinnte SCAI-Stand muss die
       # PKCE-/State-/Redirect-Bindung auf unseren echten Release-Runners
       # (macOS ARM64 und Windows x64) ausführen, nicht nur kompilieren.
+      - name: Verschlüsselte native-product-binary-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.native_product_binary.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: scai-native-product-binary-diagnostic-${{ matrix.label }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/scai-native-product-binary-diagnostic/*.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Native PKCE-Sitzungstests ausführen
+        id: native_pkce_tests
         working-directory: src
         shell: bash
+        env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-native-pkce-tests-diagnostic/failure.encrypted.json', runner.temp) || '' }}
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" native-pkce-tests cargo test --locked --manifest-path src-tauri/Cargo.toml --features local-meet auth::tests -- --nocapture
 
       # Anders als die Unit-Tests nutzt dieses explizite Smoke-Example den
       # echten macOS-Schlüsselbund beziehungsweise Windows Credential Manager.
       # Es bleibt außerhalb der Tauri-Binärziele; der zufällige Canary wird nie
       # ausgegeben und im selben Lauf gelöscht.
+      - name: Verschlüsselte native-pkce-tests-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.native_pkce_tests.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: scai-native-pkce-tests-diagnostic-${{ matrix.label }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/scai-native-pkce-tests-diagnostic/*.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Echten OS-Credential-Store beweisen
+        id: native_keyring_smoke
         working-directory: src
         env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-native-keyring-smoke-diagnostic/failure.encrypted.json', runner.temp) || '' }}
           SCAI_A1_KEYRING_SMOKE: "1"
         shell: bash
         run: |
@@ -1700,6 +2014,15 @@ jobs:
               cargo run --locked --manifest-path src-tauri/Cargo.toml \
               --example a1_keyring_smoke
           fi
+
+      - name: Verschlüsselte native-keyring-smoke-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.native_keyring_smoke.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: scai-native-keyring-smoke-diagnostic-${{ matrix.label }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/scai-native-keyring-smoke-diagnostic/*.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Private Trace-Credentials entfernen
         if: always()

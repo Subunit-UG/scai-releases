@@ -185,3 +185,48 @@ for (const path of ['not-an-envelope.log', '../escaped.json', 'nested/../../esca
   assert.doesNotMatch(result.stdout + result.stderr, /PRIVATE_PATH_CANARY/);
   assertNoRetainedLogs(result.runnerTemp);
 });
+
+
+test('step-scoped encrypted glob retains all three nested failures and excludes raw or foreign files', () => {
+  const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 3072 });
+  const workflow = readFileSync(join(ROOT, '.github/workflows/pr-check.yml'), 'utf8');
+  const producer = workflow.split(/^      - name: /m).find(step => step.includes('id: plugin_deploy_tests'));
+  const directory = producer.match(/format\('\{0\}\/([^/]+)\/failure\.encrypted\.json'/)[1];
+  const upload = workflow.split(/^      - name: /m).find(step => step.includes("steps.plugin_deploy_tests.outcome == 'failure'"));
+  assert.ok(upload.includes(`path: \${{ runner.temp }}/${directory}/*.encrypted.json`));
+  const result = invoke('outer', `
+echo RAW_NOT_UPLOADABLE > "$DIAG_DIR/raw.log"
+echo RAW_JSON_NOT_UPLOADABLE > "$DIAG_DIR/raw.json"
+echo FOREIGN_NOT_UPLOADABLE > "$RUNNER_TEMP/foreign.encrypted.json"
+bash "$TEST_RUNNER" same-label bash -c 'echo PRIVATE_FIRST_CANARY; exit 7'
+bash "$TEST_RUNNER" same-label bash -c 'echo PRIVATE_SECOND_CANARY; exit 8'
+exit 9`, runnerTemp => {
+    const dir = join(runnerTemp, directory);
+    mkdirSync(dir, { mode: 0o700 });
+    return {
+      TEST_RUNNER: RUNNER, DIAG_DIR: dir,
+      SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: Buffer.from(publicKey.export({ type: 'spki', format: 'pem' })).toString('base64'),
+      SCAI_ENCRYPTED_DIAGNOSTIC_PATH: join(dir, 'failure.encrypted.json'),
+    };
+  });
+  try {
+    assert.ifError(result.error);
+    assert.equal(result.status, 9, result.stdout + result.stderr);
+    assert.doesNotMatch(result.stdout + result.stderr, /PRIVATE_(FIRST|SECOND)_CANARY/);
+    // Exercise the exact non-recursive upload glob from the actual workflow.
+    const glob = upload.match(/^          path: (.+)$/m)[1].replace('${{ runner.temp }}', result.runnerTemp);
+    const selected = spawnSync('bash', ['-c', 'printf "%s\\n" "$DIAG_DIR"/*.encrypted.json'], {
+      encoding: 'utf8', env: { ...process.env, DIAG_DIR: join(result.runnerTemp, directory) },
+    });
+    assert.ifError(selected.error);
+    assert.equal(selected.status, 0);
+    assert.equal(glob, `${join(result.runnerTemp, directory)}/*.encrypted.json`);
+    const paths = selected.stdout.trim().split('\n').sort();
+    assert.deepEqual(paths, ['failure-outer-1.encrypted.json', 'failure-same-label-1.encrypted.json', 'failure.encrypted.json'].map(name => join(result.runnerTemp, directory, name)));
+    const plain = paths.map(path => decryptEnvelope(path, privateKey));
+    assert.ok(plain.includes('PRIVATE_FIRST_CANARY\n'));
+    assert.ok(plain.includes('PRIVATE_SECOND_CANARY\n'));
+    assert.ok(plain.some(value => value.includes('same-label failed with exit 8')));
+    assertNoRetainedLogs(result.runnerTemp);
+  } finally { rmSync(result.runnerTemp, { recursive: true, force: true }); }
+});
