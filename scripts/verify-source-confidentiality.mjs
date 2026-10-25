@@ -108,13 +108,33 @@ function requirePrContract(pr, require) {
     && steps.indexOf(rustReady) < privateCheckout && steps.indexOf(rustReady) < frontendTests,
   "pr-check.yml: Rust setup and bounded compiler readiness must precede private checkout and frontend tests without bypass");
   for (const [name, label, command] of [
-    ["Web- und Release-Fixture-Verträge prüfen", "web-release-fixture-tests", "npm run test:web"],
     ["Plugin-Deploy-Snapshot und Fehlergrenzen prüfen", "plugin-deploy-tests", "npm run test:plugin-deploy"],
   ]) {
     const expected = `      - name: ${name}\n        working-directory: src\n        shell: bash\n        run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" ${label} ${command}`;
     require(steps.filter((step) => step === expected).length === 1,
       `pr-check.yml: ${label} must be an unconditional confidential fail-closed source gate`);
   }
+  const webReleaseFixture = `      - name: Web- und Release-Fixture-Verträge prüfen
+        id: web_release_fixture_tests
+        working-directory: src
+        shell: bash
+        env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: \${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: \${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/scai-web-release-fixture-diagnostic.json', runner.temp) || '' }}
+        run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" web-release-fixture-tests npm run test:web`;
+  require(steps.filter((step) => step === webReleaseFixture).length === 1
+    && steps.filter((step) => /^        id: web_release_fixture_tests$/m.test(step)).length === 1,
+    "pr-check.yml: Web/release fixture diagnostics require exact mandatory confidential keyed source gate");
+  const webReleaseFixtureUploads = steps.filter((step) => step.includes("uses: actions/upload-artifact@") && step.includes("scai-web-release-fixture"));
+  require(webReleaseFixtureUploads.length === 1 && webReleaseFixtureUploads[0] === `      - name: Verschlüsselte Web-/Release-Fixture-Fehlerdiagnostik bereitstellen
+        if: failure() && steps.web_release_fixture_tests.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: scai-web-release-fixture-encrypted-diagnostic-\${{ github.run_id }}
+          path: \${{ runner.temp }}/scai-web-release-fixture-diagnostic.json
+          if-no-files-found: error
+          retention-days: 1`,
+    "pr-check.yml: Web/release fixture diagnostics require exact failed step one-day encrypted envelope");
   const frontendUnit = `      - name: Frontend-Vertragstests ausführen
         id: frontend_unit_tests
         working-directory: src
