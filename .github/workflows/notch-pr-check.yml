@@ -94,11 +94,50 @@ jobs:
           git remote remove origin
           echo "PASS notch-base-fetch"
 
+      # Only trusted public gate code runs while the short-lived Charge token lives.
+      - name: Charge repository and matching immutable pins
+        id: charge
+        run: python3 gate/scripts/prepare-notch-charge.py pin private/subunit-notch >> "$GITHUB_OUTPUT"
+
+      - name: Charge read-only installation token
+        if: steps.charge.outputs.required == 'true'
+        id: charge-app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2, immutable
+        with:
+          app-id: ${{ vars.CHARGE_READ_APP_ID }}
+          private-key: ${{ secrets.CHARGE_READ_APP_PRIVATE_KEY }}
+          owner: Subunit-UG
+          repositories: subunit-charge
+          permission-contents: read
+          # Default post revocation remains a last-resort fallback, not our gate.
+
+      - name: Prepare exact local Charge mirror without executing manifests
+        if: steps.charge.outputs.required == 'true'
+        env:
+          CHARGE_TOKEN: ${{ steps.charge-app.outputs.token }}
+          CHARGE_SHA: ${{ steps.charge.outputs.sha }}
+        run: python3 gate/scripts/prepare-notch-charge.py prepare private/subunit-notch "$CHARGE_SHA"
+
+      - name: Revoke Charge token before any private code, including on fetch failure
+        if: always() && steps.charge-app.outputs.token != ''
+        env:
+          CHARGE_TOKEN: ${{ steps.charge-app.outputs.token }}
+        run: python3 gate/scripts/prepare-notch-charge.py revoke
+
+      - name: Require revoked token and credential-free local dependency
+        if: success() && steps.charge.outputs.required == 'true'
+        env:
+          CHARGE_SHA: ${{ steps.charge.outputs.sha }}
+        run: python3 gate/scripts/prepare-notch-charge.py ready private/subunit-notch "$CHARGE_SHA"
+
       - name: Pruefschritte
         working-directory: private/subunit-notch
+        env:
+          CHARGE_LOCAL_ONLY: ${{ steps.charge.outputs.required }}
         shell: bash
         run: |
           set -uo pipefail
+          if [ "$CHARGE_LOCAL_ONLY" = true ]; then export GIT_ALLOW_PROTOCOL=file; fi
           test -f scripts/ci-check.sh || { echo "::error::scripts/ci-check.sh fehlt im Quellstand"; exit 1; }
           diag_dir="$RUNNER_TEMP/notch-diagnostics"; mkdir -p "$diag_dir"
           failed=0
