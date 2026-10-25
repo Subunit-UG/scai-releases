@@ -584,6 +584,45 @@ test("Pages diagnostics cannot upload plaintext or a source-tree path", () => {
   assert.match(validateSourceConfidentiality(unsafe, assetSelector).join("\n"), /Pages diagnostics may upload only a one-time-key encrypted envelope/);
 });
 
+// CI 40208997675 dispatched a recipient, but the web fixture step received no
+// encryption env and had no upload. Bind this exact mandatory gate end to end.
+const webFixtureProofName = "Web- und Release-Fixture-Verträge prüfen";
+const webFixtureUploadName = "Verschlüsselte Web-/Release-Fixture-Fehlerdiagnostik bereitstellen";
+function webFixtureDiagnosticMutation(transform) {
+  const source = fixtures["pr-check.yml"];
+  const start = source.indexOf(`      - name: ${webFixtureProofName}\n`);
+  const end = source.indexOf("      - name: Plugin-Deploy-Snapshot und Fehlergrenzen prüfen\n", start);
+  assert.ok(start >= 0 && end > start);
+  const block = source.slice(start, end); const changed = transform(block);
+  assert.notEqual(changed, block, "mutation must change the real workflow");
+  return { ...fixtures, "pr-check.yml": source.slice(0, start) + changed + source.slice(end) };
+}
+
+test("web fixture diagnostic has exactly one mandatory producer and failed-step encrypted upload", () => {
+  assert.match(meetStep(webFixtureProofName), /^        id: web_release_fixture_tests$/m);
+  assert.match(meetStep(webFixtureUploadName), /^          retention-days: 1$/m);
+  assert.deepEqual(validateSourceConfidentiality(fixtures, assetSelector), []);
+});
+
+for (const [label, transform] of [
+  ["missing id", block => block.replace("        id: web_release_fixture_tests\n", "")],
+  ["missing recipient env", block => block.replace(/^          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64:.*\n/m, "")],
+  ["missing diagnostic path", block => block.replace(/^          SCAI_ENCRYPTED_DIAGNOSTIC_PATH:.*\n/m, "")],
+  ["mismatched diagnostic path", block => block.replace("format('{0}/scai-web-release-fixture-diagnostic.json', runner.temp)", "format('{0}/wrong-diagnostic.json', runner.temp)")],
+  ["missing upload", block => block.slice(0, block.indexOf(`      - name: ${webFixtureUploadName}\n`))],
+  ["wrong failed step", block => block.replace("steps.web_release_fixture_tests.outcome", "steps.frontend_unit_tests.outcome")],
+  ["upload without recipient guard", block => block.replace(" && inputs.diagnostic_public_key_base64 != ''\n", "\n")],
+  ["unconditional upload", block => block.replace(/^        if: failure\(\).*$/m, "        if: always()")],
+  ["raw output upload", block => block.replace("path: ${{ runner.temp }}/scai-web-release-fixture-diagnostic.json", "path: src/private-test.log")],
+  ["mutable upload action", block => block.replace("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", "actions/upload-artifact@v4")],
+  ["long retention", block => block.replace("retention-days: 1", "retention-days: 90")],
+  ["missing envelope tolerated", block => block.replace("if-no-files-found: error", "if-no-files-found: warn")],
+  ["upload failure ignored", block => block.replace(`- name: ${webFixtureUploadName}\n`, `- name: ${webFixtureUploadName}\n        continue-on-error: true\n`)],
+  ["duplicate upload", block => block + block.slice(block.indexOf(`      - name: ${webFixtureUploadName}\n`)).replace(webFixtureUploadName, "Duplicate web fixture upload")],
+]) test(`web fixture diagnostic rejects ${label}`, () => {
+  assert.match(validateSourceConfidentiality(webFixtureDiagnosticMutation(transform), assetSelector).join("\n"), /Web\/release fixture diagnostics/);
+});
+
 test("Frontend unit diagnostics require the supplied key and exact encrypted envelope", () => {
   const expected = /Frontend unit diagnostics (?:must stay confidential and use the supplied one-time key|may upload only the keyed one-day encrypted envelope, never raw test output)/;
   const cases = [
