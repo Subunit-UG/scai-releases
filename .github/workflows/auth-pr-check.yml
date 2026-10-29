@@ -69,7 +69,7 @@ jobs:
       - name: Gepinntes Bun einrichten
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2, immutable
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.4
       - name: Ephemere JWT-Testschluessel erzeugen
         shell: bash
         run: |
