@@ -534,7 +534,7 @@ function hasClosedServiceLogging(workflow) {
 // positive Allowlist nicht durch scheinbar sichere Textfragmente umgehen.
 // Diagnose-Upload ausschließlich vom Sealing-Schritt: jeder Glob-Treffer wird
 // erneut verschlüsselt. Installer-Upload nur mit exakt geprüften Dateipfaden.
-const SONAR_WORKFLOW_SHA256 = "cacb122e8658f67aa21c4b1b7e2d8b8fe24f79b070986f1885ea24b4dd06330b";
+const SONAR_WORKFLOW_SHA256 = "01158d271439d444761eea9739c28d89758e71204cc45c76aa86bf0223ed6677";
 export function validateSonarWorkflow(workflow) {
   if (typeof workflow !== "string"
       || createHash("sha256").update(workflow).digest("hex") !== SONAR_WORKFLOW_SHA256) {
