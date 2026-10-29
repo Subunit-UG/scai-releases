@@ -112,7 +112,11 @@ jobs:
         shell: bash
         run: |
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" echo-runtime-contracts bash -c '
-            grep -Eq "^COPY .*meeting_queue\\.py .* /app/$" server/Dockerfile &&
+            # Seit der Meet-Trennung liegen meeting_queue/meeting_state_store im Paket;
+            # check-meet-image.py prueft dann Modul- und Artefaktvollstaendigkeit des Images.
+            if [ ! -f vendor/meet-requirements.txt ]; then
+              grep -Eq "^COPY .*meeting_queue\\.py .* /app/$" server/Dockerfile
+            fi &&
             if [ -f server/meeting_state_store.py ]; then
               grep -Eq "^COPY .*meeting_state_store\\.py .* /app/$" server/Dockerfile &&
               python3 -m py_compile scripts/meeting-state-backup.py
