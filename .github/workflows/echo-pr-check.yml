@@ -67,7 +67,19 @@ jobs:
             "fastapi==0.136.3" "pydantic[email]==2.13.4" "httpx==0.28.1" \
             "python-multipart==0.0.29" "PyJWT==2.13.0" "requests==2.33.0" \
             "soundfile==0.14.0" "anyio==4.14.2" "starlette==1.3.1" \
-            "typing_extensions==4.16.0"
+            "typing_extensions==4.16.0" "setuptools==69.5.1" "wheel==0.43.0"
+          # Seit der Meet-Trennung (18.10.2026) kommen die Meet-Module aus gepinnten
+          # Vendor-Archiven, genau wie in server-contracts.yml des Quell-Repos.
+          if [ -f vendor/meet-requirements.txt ]; then
+            bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" echo-install-meet \
+              python -m pip install --no-index --no-deps --no-build-isolation --require-hashes -r vendor/meet-requirements.txt
+          fi
+          if [ -f vendor/meet-intelligence.json ]; then
+            mkdir -p .work/intelligence
+            bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" echo-install-intel \
+              python scripts/meet-artifact.py vendor/meet-intelligence.json .work/intelligence
+            echo "PYTHONPATH=$PWD/.work/intelligence" >> "$GITHUB_ENV"
+          fi
 
       - name: Python-Syntax und vollstaendige Server-Suite
         working-directory: private/echo
@@ -79,24 +91,47 @@ jobs:
         working-directory: private/echo
         shell: bash
         run: |
-          bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" echo-latency-stop-ship \
-            python -m unittest server.tests.test_meeting_release_gate.MeetingReleaseGateTests.test_known_30_minute_aggregate_is_stop_ship_and_incomplete
+          if [ -f vendor/meet-requirements.txt ]; then
+            # Seit der Meet-Trennung: gleicher Beweis wie server-contracts.yml.
+            # Erst Modul und Baseline belegen, sonst waere ein Importfehler ein falsches Gruen.
+            test -f server/benchmarks/meeting-pipeline/gtx1070ti-ami-2h-baseline.json
+            bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" echo-latency-import \
+              python -c "import meeting_release_gate"
+            if bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" echo-latency-stop-ship \
+              python -m meeting_release_gate server/benchmarks/meeting-pipeline/gtx1070ti-ami-2h-baseline.json; then
+              echo "known red baseline was incorrectly accepted" >&2
+              exit 1
+            fi
+          else
+            bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" echo-latency-stop-ship \
+              python -m unittest server.tests.test_meeting_release_gate.MeetingReleaseGateTests.test_known_30_minute_aggregate_is_stop_ship_and_incomplete
+          fi
 
       - name: Runtime-, Watcher- und Deployment-Vertraege
         working-directory: private/echo
         shell: bash
         run: |
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" echo-runtime-contracts bash -c '
-            grep -Eq "^COPY .*meeting_queue\\.py .* /app/$" server/Dockerfile &&
+            # Seit der Meet-Trennung liegen meeting_queue/meeting_state_store im Paket;
+            # check-meet-image.py prueft dann Modul- und Artefaktvollstaendigkeit des Images.
+            if [ ! -f vendor/meet-requirements.txt ]; then
+              grep -Eq "^COPY .*meeting_queue\\.py .* /app/$" server/Dockerfile
+            fi &&
             if [ -f server/meeting_state_store.py ]; then
               grep -Eq "^COPY .*meeting_state_store\\.py .* /app/$" server/Dockerfile &&
               python3 -m py_compile scripts/meeting-state-backup.py
             fi &&
             bash -n scripts/deploy.sh &&
-            bash -n ops/meet-intelligence/meet-intelligence.sh &&
-            bash -n ops/meet-intelligence/meet-intel-watch.sh &&
-            bash -n ops/meet-intelligence/meet-prompts.sh &&
-            bash -n ops/meet-intelligence/meet-prompt-version.sh'
+            if [ -f vendor/meet-intelligence.json ]; then
+              python3 scripts/check-meet-image.py &&
+              w=.work/intelligence
+            else
+              w=ops/meet-intelligence
+            fi &&
+            bash -n "$w"/meet-intelligence.sh &&
+            bash -n "$w"/meet-intel-watch.sh &&
+            bash -n "$w"/meet-prompts.sh &&
+            bash -n "$w"/meet-prompt-version.sh'
 
       - name: Temporaeren privaten Checkout entfernen
         if: always()
