@@ -6,6 +6,7 @@
 # Befehlsausgaben bleiben in fluechtigen Dateien und werden nie veroeffentlicht.
 
 name: Echo PR Check (private source)
+run-name: "Echo PR Check ${{ inputs.source_sha }}"   # u1-gate findet den Lauf zum exakten Head (Mauer 29.10.)
 
 on:
   workflow_dispatch:

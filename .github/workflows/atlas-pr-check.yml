@@ -6,6 +6,7 @@
 # Memory-Agent, pgvector-Service, Trust-/Dirty-Doc-Proofs).
 
 name: Atlas PR Check (private source)
+run-name: "Atlas PR Check ${{ inputs.source_sha }}"   # u1-gate findet den Lauf zum exakten Head (Mauer 29.10.)
 
 on:
   workflow_dispatch:

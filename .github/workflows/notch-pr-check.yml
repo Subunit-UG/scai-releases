@@ -10,6 +10,7 @@
 # Einmal-Empfaengerschluessel das Runner verlassen.
 
 name: Notch PR Check (private source)
+run-name: "Notch PR Check ${{ inputs.source_sha }}"   # u1-gate findet den Lauf zum exakten Head (Mauer 29.10.)
 
 on:
   workflow_dispatch:
