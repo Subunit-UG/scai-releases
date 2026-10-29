@@ -5,6 +5,9 @@
 # veroeffentlicht. Spiegelt den subunit-auth-Job aus fleet-source-check.yml.
 
 name: subunit-auth PR Check (private source)
+# Der Titel trägt den geprüften SHA: u1-gate findet so den Lauf zum exakten Head (Mauer 29.10.:
+# OIDC-PRs wurden gegated, ohne dass diese CI für ihren Head gelaufen war).
+run-name: "subunit-auth PR Check ${{ inputs.source_sha }}"
 
 on:
   workflow_dispatch:
