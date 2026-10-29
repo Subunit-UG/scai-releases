@@ -91,8 +91,21 @@ jobs:
         working-directory: private/echo
         shell: bash
         run: |
-          bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" echo-latency-stop-ship \
-            python -m unittest server.tests.test_meeting_release_gate.MeetingReleaseGateTests.test_known_30_minute_aggregate_is_stop_ship_and_incomplete
+          if [ -f vendor/meet-requirements.txt ]; then
+            # Seit der Meet-Trennung: gleicher Beweis wie server-contracts.yml.
+            # Erst Modul und Baseline belegen, sonst waere ein Importfehler ein falsches Gruen.
+            test -f server/benchmarks/meeting-pipeline/gtx1070ti-ami-2h-baseline.json
+            bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" echo-latency-import \
+              python -c "import meeting_release_gate"
+            if bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" echo-latency-stop-ship \
+              python -m meeting_release_gate server/benchmarks/meeting-pipeline/gtx1070ti-ami-2h-baseline.json; then
+              echo "known red baseline was incorrectly accepted" >&2
+              exit 1
+            fi
+          else
+            bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" echo-latency-stop-ship \
+              python -m unittest server.tests.test_meeting_release_gate.MeetingReleaseGateTests.test_known_30_minute_aggregate_is_stop_ship_and_incomplete
+          fi
 
       - name: Runtime-, Watcher- und Deployment-Vertraege
         working-directory: private/echo
