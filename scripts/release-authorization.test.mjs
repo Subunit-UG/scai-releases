@@ -15,7 +15,7 @@ const FOREIGN = [
   "subunit-ug.attacker/scai-releases", "Subunit-UG/scai-releases2", "Subunit-UG/other", "Subunit-UG/Scai-Releases",
   "Subunit-UG/scai-releases/", "/Subunit-UG/scai-releases", "Subunit-UG//scai-releases", " Subunit-UG/scai-releases",
   "Subunit-UG/scai-releases ", "Subunit-UG/scai-releases\n", "Subunit-UG", "scai-releases", "",
-  "subunit-aı/scai-releases", "subunit-aİ/scai-releases", "Subunit-Uɢ/scai-releases",
+  "subunit-a\u0131/scai-releases", "subunit-a\u0130/scai-releases", "Subunit-U\u0262/scai-releases",
 ];
 const authorization = repository => ({
   repository, tag, distribution_policy: "market-ready",
