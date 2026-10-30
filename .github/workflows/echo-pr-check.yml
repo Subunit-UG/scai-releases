@@ -52,7 +52,7 @@ jobs:
       - name: Echo exakt und read-only auschecken
         env:
           SOURCE_DEPLOY_KEY: ${{ secrets.ECHO_SOURCE_DEPLOY_KEY }}
-        run: bash gate/scripts/checkout-private-source.sh echo git@github.com:subunit-ai/echo.git "$SOURCE_SHA"
+        run: bash gate/scripts/checkout-private-source.sh echo git@github.com:Subunit-UG/echo-server.git "$SOURCE_SHA"
 
       - name: Testabhaengigkeiten installieren
         working-directory: private/echo

@@ -67,7 +67,7 @@ jobs:
       - name: Notch exakt und read-only auschecken
         env:
           SOURCE_DEPLOY_KEY: ${{ secrets.NOTCH_SOURCE_DEPLOY_KEY }}
-        run: bash gate/scripts/checkout-private-source.sh subunit-notch git@github.com:subunit-ai/subunit-notch.git "$SOURCE_SHA"
+        run: bash gate/scripts/checkout-private-source.sh subunit-notch git@github.com:Subunit-UG/mac-notch.git "$SOURCE_SHA"
 
       - name: Basis fuer Whitespace nachladen
         if: inputs.base_sha != ''
@@ -90,7 +90,7 @@ jobs:
           [ "$fp" = "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU" ] || { echo "::error::GitHub host key mismatch"; exit 68; }
           export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o UserKnownHostsFile=$kh -o StrictHostKeyChecking=yes"
           cd private/subunit-notch
-          git remote add origin git@github.com:subunit-ai/subunit-notch.git
+          git remote add origin git@github.com:Subunit-UG/mac-notch.git
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" notch-base-fetch git fetch --depth 200 origin "$BASE_SHA" "$SOURCE_SHA"
           git remote remove origin
           echo "PASS notch-base-fetch"

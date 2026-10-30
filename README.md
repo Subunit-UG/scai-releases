@@ -2,7 +2,7 @@
 
 Installer für **SCAI (Subunit Corporate AI)** und der Feed für den In-App-Auto-Updater (`latest.json`).
 Der proprietäre Quellcode liegt ausschließlich im privaten Repo
-`subunit-ai/subunit-scai`. Dieses öffentliche Repo enthält nur den Release-Vertrag,
+`Subunit-UG/scai-app` (früher `subunit-ai/subunit-scai`). Dieses öffentliche Repo enthält nur den Release-Vertrag,
 sanitisierte Prüfevidenz und ausdrücklich allowlistete Binärartefakte.
 Release-Builds aktivieren das Cargo-Feature `local-meet` auf **macOS Apple Silicon,
 Windows x64 und Windows ARM64**. Dort sind lokale Meeting-Aufzeichnung,
@@ -126,6 +126,6 @@ Canary auf unserem eigenen Mac.
 
 `sonar-build.yml` baut einen exakten privaten Sonar-Commit mit gebundenen Bridge-/Trace-Pins
 vertraulich auf fünf Targets. Nur fertige Installer, Updater-Payloads, Signaturen und
-`latest.json` gelangen nach `subunit-ai/sonar-releases`; vorhandene Tags/Releases und
+`latest.json` gelangen nach `Subunit-UG/sonar-releases`; vorhandene Tags/Releases und
 nicht monotone Versionen werden abgewiesen. Fehlerdiagnosen sind nur mit dem optionalen
 Einmal-RSA-Schlüssel verschlüsselt und für einen Tag verfügbar.

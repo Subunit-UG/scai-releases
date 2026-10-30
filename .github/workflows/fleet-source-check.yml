@@ -78,7 +78,7 @@ jobs:
         env:
           SOURCE_DEPLOY_KEY: ${{ secrets.U1_CHAT_SOURCE_DEPLOY_KEY }}
           SOURCE_SHA: ${{ inputs.u1_chat_sha }}
-        run: bash gate/scripts/checkout-private-source.sh u1-chat git@github.com:subunit-ai/u1-chat.git "$SOURCE_SHA"
+        run: bash gate/scripts/checkout-private-source.sh u1-chat git@github.com:Subunit-UG/infra-u1-chat.git "$SOURCE_SHA"
 
       # Laufzeit = Pin der ausgelieferten Quelle (wie u1-chat-pr-check.yml); Abweichung macht den Lauf rot.
       - name: Bun-Pin der Quelle pruefen
@@ -173,7 +173,7 @@ jobs:
         env:
           SOURCE_DEPLOY_KEY: ${{ secrets.ATLAS_SOURCE_DEPLOY_KEY }}
           SOURCE_SHA: ${{ inputs.atlas_sha }}
-        run: bash gate/scripts/checkout-private-source.sh atlas git@github.com:subunit-ai/atlas.git "$SOURCE_SHA"
+        run: bash gate/scripts/checkout-private-source.sh atlas git@github.com:Subunit-UG/infra-atlas.git "$SOURCE_SHA"
 
       # Wie atlas-pr-check: CI-Laufzeit muss dem API-/Worker-Pin der Quelle entsprechen (live 1.4.4).
       - name: Bun-Pin der Quelle prüfen
@@ -262,7 +262,7 @@ jobs:
         env:
           SOURCE_DEPLOY_KEY: ${{ secrets.AUTH_SOURCE_DEPLOY_KEY }}
           SOURCE_SHA: ${{ inputs.auth_sha }}
-        run: bash gate/scripts/checkout-private-source.sh subunit-auth git@github.com:subunit-ai/subunit-auth.git "$SOURCE_SHA"
+        run: bash gate/scripts/checkout-private-source.sh subunit-auth git@github.com:Subunit-UG/infra-auth.git "$SOURCE_SHA"
 
       - name: Abhängigkeiten installieren
         working-directory: private/subunit-auth
@@ -305,7 +305,7 @@ jobs:
         env:
           SOURCE_DEPLOY_KEY: ${{ secrets.ECHO_SOURCE_DEPLOY_KEY }}
           SOURCE_SHA: ${{ inputs.echo_sha }}
-        run: bash gate/scripts/checkout-private-source.sh echo git@github.com:subunit-ai/echo.git "$SOURCE_SHA"
+        run: bash gate/scripts/checkout-private-source.sh echo git@github.com:Subunit-UG/echo-server.git "$SOURCE_SHA"
 
       - name: Testabhängigkeiten installieren
         working-directory: private/echo

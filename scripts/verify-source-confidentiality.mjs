@@ -534,7 +534,8 @@ function hasClosedServiceLogging(workflow) {
 // positive Allowlist nicht durch scheinbar sichere Textfragmente umgehen.
 // Diagnose-Upload ausschließlich vom Sealing-Schritt: jeder Glob-Treffer wird
 // erneut verschlüsselt. Installer-Upload nur mit exakt geprüften Dateipfaden.
-const SONAR_WORKFLOW_SHA256 = "01158d271439d444761eea9739c28d89758e71204cc45c76aa86bf0223ed6677";
+// Neu gepinnt beim Org-Umzug (2026-10-30): nur kanonische Checkout-Pfade und ein Kommentar zum App-Owner.
+const SONAR_WORKFLOW_SHA256 = "dd60188e7bd540b47a1bf4fabd3c7053eb31891c373391587cf253e048274a7b";
 export function validateSonarWorkflow(workflow) {
   if (typeof workflow !== "string"
       || createHash("sha256").update(workflow).digest("hex") !== SONAR_WORKFLOW_SHA256) {
@@ -546,10 +547,10 @@ export function validateSonarWorkflow(workflow) {
 // Die Upload- und Release-Logik liegt in Helfern; auch diese gehören zur Allowlist.
 const SONAR_HELPER_SHA256 = {
   "encrypt-confidential-log.mjs": "30543468128ed79573db015680dbb602f0aaaecf05d860320594f2eb64388764",
-  "checkout-private-source.sh": "6f5bc66f16315f3dd1a10cc6842d15070990e0139fc31abe742a44aaf0f242a0",
+  "checkout-private-source.sh": "a58cb2d46d9ca81f8bfa7ab3942f06e1592d267e7eb071570899c4036e300337",
   "sonar-build.sh": "cffc972709c08fb4c9bc217a7c88b522949f92399a9213cdb38426d710415b9c",
   "sonar-minisign.sh": "366958a33688dbea00fe52b49be5a5429971a58cf2f8f887267509c5bb91bc73",
-  "sonar-release.mjs": "2a1bc4a9ea5598b94800fcd6d303499a3cfa4e8317b28cde70955144ee691538",
+  "sonar-release.mjs": "2299215eefd6bad248ae1a197a705fc4d6f095bc8c855c967f7f5510cc2aa8fc",
 };
 export function validateSonarHelpers(helpers) {
   return Object.entries(SONAR_HELPER_SHA256).flatMap(([name, digest]) =>

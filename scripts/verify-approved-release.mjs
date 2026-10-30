@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateManifest } from "./verify-fleet-manifest.mjs";
 import { parseVersion } from "./assert-semver-monotonic.mjs";
-import { releaseAssetUrl, TARGETS, validateReleaseAuthorization } from "./release-authorization.mjs";
+import { releaseAssetUrl, sameReleaseAssetUrl, sameReleaseRepository, TARGETS, validateReleaseAuthorization } from "./release-authorization.mjs";
 
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 const sameNames = (actual, expected, label) => assert.deepEqual([...actual].sort(), [...expected].sort(), `${label}: exact inventory required`);
@@ -23,7 +23,8 @@ function readSmallRegular(path) {
 function verifyMetadata(manifest, release, repository, tag, releaseId) {
   const approved = manifest.authorized_release;
   assert.deepEqual(validateReleaseAuthorization(approved), [], "complete release authorization required");
-  assert.equal(approved.repository, repository, "repository differs from approval");
+  // Org-Umzug: Freigabe und Workflow dürfen je eine der zwei Schreibweisen desselben Repos tragen.
+  assert.ok(sameReleaseRepository(approved.repository, repository), "repository differs from approval");
   assert.equal(approved.tag, tag, "tag differs from approval");
   assert.equal(manifest.release_id, releaseId, "release ID differs from approval");
   assert.equal(release.tag_name, tag, "draft lookup returned another tag");
@@ -39,7 +40,7 @@ function verifyMetadata(manifest, release, repository, tag, releaseId) {
   const remote = new Map(release.assets.map(asset => [asset.name, asset]));
   for (const asset of approved.assets) {
     const found = remote.get(asset.name);
-    assert.equal(found.browser_download_url, asset.url, `remote URL differs: ${asset.name}`);
+    assert.ok(sameReleaseAssetUrl(found.browser_download_url, asset.url), `remote URL differs: ${asset.name}`);
     assert.equal(found.digest, `sha256:${asset.sha256}`, `remote digest differs or is missing: ${asset.name}`);
     assert.equal(found.state, "uploaded", `remote asset incomplete: ${asset.name}`);
     assert.ok(Number.isSafeInteger(found.size) && found.size > 0, `invalid remote asset size: ${asset.name}`);
@@ -55,12 +56,12 @@ function verifyMetadata(manifest, release, repository, tag, releaseId) {
   };
   for (const [platform, [installer, signature, target]] of Object.entries(platforms)) {
     const record = manifest.artifacts.platforms[platform];
-    assert.equal(record.artifact_url, assets.get(installer).url, `${platform}: installer URL differs from approval`);
+    assert.ok(sameReleaseAssetUrl(record.artifact_url, assets.get(installer).url), `${platform}: installer URL differs from approval`);
     assert.equal(record.sha256, assets.get(installer).sha256, `${platform}: installer hash differs from approval`);
-    assert.equal(record.updater_signature_url, assets.get(signature).url, `${platform}: signature URL differs from approval`);
-    assert.equal(record.sbom_url, assets.get("scai.cdx.json").url, `${platform}: SBOM URL differs from approval`);
+    assert.ok(sameReleaseAssetUrl(record.updater_signature_url, assets.get(signature).url), `${platform}: signature URL differs from approval`);
+    assert.ok(sameReleaseAssetUrl(record.sbom_url, assets.get("scai.cdx.json").url), `${platform}: SBOM URL differs from approval`);
     assert.equal(record.sbom_sha256, assets.get("scai.cdx.json").sha256, `${platform}: SBOM hash differs from approval`);
-    if (platform !== "linux_x64") assert.equal(record.code_signature_evidence_url, assets.get(`signing-evidence-${target}.json`).url, `${platform}: signing evidence URL differs from approval`);
+    if (platform !== "linux_x64") assert.ok(sameReleaseAssetUrl(record.code_signature_evidence_url, assets.get(`signing-evidence-${target}.json`).url), `${platform}: signing evidence URL differs from approval`);
   }
   return { approved, assets, remote };
 }
@@ -123,7 +124,7 @@ export async function verifyApprovedRelease({ manifestBytes, manifestSha256, rel
   };
   sameNames(Object.keys(latest.platforms ?? {}), Object.keys(updater), "updater targets");
   for (const [key, name] of Object.entries(updater)) {
-    assert.equal(latest.platforms[key].url, releaseAssetUrl(repository, tag, name), `${key}: wrong updater asset URL`);
+    assert.ok(sameReleaseAssetUrl(latest.platforms[key].url, releaseAssetUrl(repository, tag, name)), `${key}: wrong updater asset URL`);
     const signature = text(`${name}.sig`).trim();
     assert.ok(signature.length > 0, `${key}: empty signature`);
     assert.equal(latest.platforms[key].signature, signature, `${key}: updater signature differs from approved signature file`);

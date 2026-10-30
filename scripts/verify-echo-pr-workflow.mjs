@@ -8,7 +8,7 @@ const checks = [
   ["vollstaendiger SHA ist Pflicht", /\^\[0-9a-f\]\{40\}\$/u.test(workflow)],
   ["nur Leserechte", /permissions:\s*\n\s*contents: read/u.test(workflow)],
   ["Echo-Key ist repo-spezifisch", /secrets\.ECHO_SOURCE_DEPLOY_KEY/u.test(workflow)],
-  ["Checkout nutzt die feste Allowlist", /checkout-private-source\.sh echo git@github\.com:subunit-ai\/echo\.git/u.test(workflow)],
+  ["Checkout nutzt die feste Allowlist", /checkout-private-source\.sh echo git@github\.com:Subunit-UG\/echo-server\.git/u.test(workflow)],
   ["Checkout ist SHA-gebunden", /checkout-private-source\.sh echo[^\n]+"\$SOURCE_SHA"/u.test(workflow)],
   ["Third-Party-Actions sind immutable gepinnt", !/uses:\s+[^\s@]+@(?![0-9a-f]{40}(?:\s|$))/u.test(workflow)],
   ["private Ausgaben laufen confidential", (workflow.match(/run-confidential\.sh/g) || []).length >= 5],

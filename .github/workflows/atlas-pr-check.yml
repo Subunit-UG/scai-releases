@@ -93,7 +93,7 @@ jobs:
       - name: Atlas exakt und read-only auschecken
         env:
           SOURCE_DEPLOY_KEY: ${{ secrets.ATLAS_SOURCE_DEPLOY_KEY }}
-        run: bash gate/scripts/checkout-private-source.sh atlas git@github.com:subunit-ai/atlas.git "$SOURCE_SHA"
+        run: bash gate/scripts/checkout-private-source.sh atlas git@github.com:Subunit-UG/infra-atlas.git "$SOURCE_SHA"
       # Setup stays before private source; the confidential check fails closed
       # when CI drifts from the API/worker runtime pinned in the source.
       - name: Bun-Pin der Quelle pruefen

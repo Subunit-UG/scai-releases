@@ -1,6 +1,37 @@
 import { parseVersion } from "./assert-semver-monotonic.mjs";
 
-export const RELEASE_REPOSITORY = "subunit-ai/scai-releases";
+// Org-Umzug (TJ 2026-10-30): subunit-ai/scai-releases heißt jetzt Subunit-UG/scai-releases.
+// GitHub leitet die alte Adresse weiter, github.repository und browser_download_url
+// liefern danach aber die neue. Freigaben und Belege aus der Zeit vor dem Umzug tragen
+// die alte. Zugelassen sind deshalb genau diese zwei Owner (Groß-/Kleinschreibung egal,
+// wie bei GitHub) und genau dieser Repo-Name, kein offenes Muster.
+export const RELEASE_REPOSITORY = "Subunit-UG/scai-releases";
+export const APPROVED_OWNERS = Object.freeze(["subunit-ai", "Subunit-UG"]);
+const RELEASE_REPOSITORY_NAME = "scai-releases";
+const APPROVED_OWNER_KEYS = new Set(APPROVED_OWNERS.map(owner => owner.toLowerCase()));
+const RELEASE_ASSET_URL = /^https:\/\/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)\/releases\/download\/([^/?#\s]+)\/([^/?#\s]+)$/;
+
+// Erst ASCII erzwingen, dann kleinschreiben: Unicode-Doppelgänger (etwa das punktlose ı,
+// das per toUpperCase() zu I wird) dürfen nie über Groß-/Kleinschreibung zum Owner werden.
+export const isApprovedOwner = owner => typeof owner === "string" && /^[A-Za-z0-9-]+$/.test(owner)
+  && APPROVED_OWNER_KEYS.has(owner.toLowerCase());
+
+export function isReleaseRepository(value) {
+  if (typeof value !== "string") return false;
+  const parts = value.split("/");
+  return parts.length === 2 && isApprovedOwner(parts[0]) && parts[1] === RELEASE_REPOSITORY_NAME;
+}
+
+// Es gibt genau ein Release-Repo; beide Seiten müssen eine seiner zwei Schreibweisen sein.
+export const sameReleaseRepository = (a, b) => isReleaseRepository(a) && isReleaseRepository(b);
+
+// Gleiche Download-Datei im Release-Repo: Tag und Dateiname exakt, Owner nur aus der Allowlist.
+export function sameReleaseAssetUrl(actual, expected) {
+  const a = typeof actual === "string" ? RELEASE_ASSET_URL.exec(actual) : null;
+  const e = typeof expected === "string" ? RELEASE_ASSET_URL.exec(expected) : null;
+  return Boolean(a && e && sameReleaseRepository(`${a[1]}/${a[2]}`, `${e[1]}/${e[2]}`) && a[3] === e[3] && a[4] === e[4]);
+}
+
 export const RELEASE_POLICIES = ["market-ready", "legacy-v0.125"];
 export const TARGETS = ["aarch64-apple-darwin", "x86_64-apple-darwin", "aarch64-pc-windows-msvc", "x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"];
 
@@ -32,7 +63,7 @@ export function validateReleaseAuthorization(value) {
   const require = (condition, message) => { if (!condition) errors.push(`authorized_release: ${message}`); };
   require(exactKeys(value, ["repository", "tag", "distribution_policy", "assets"]), "fields must match exactly");
   if (!value || typeof value !== "object") return errors;
-  require(value.repository === RELEASE_REPOSITORY, "repository must be the approved release repository");
+  require(isReleaseRepository(value.repository), "repository must be the approved release repository");
   require(RELEASE_POLICIES.includes(value.distribution_policy), "distribution policy is unsupported");
   let expected;
   try { expected = releaseAssetNames(value.tag); } catch { require(false, "tag must be an exact SemVer tag"); }

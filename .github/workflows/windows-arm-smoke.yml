@@ -64,7 +64,7 @@ jobs:
           # inputs all use the same path. No source ref is interpolated into a
           # shell expression; it remains one quoted git argument.
           git init src
-          git -C src remote add origin git@github.com:subunit-ai/subunit-scai.git
+          git -C src remote add origin git@github.com:Subunit-UG/scai-app.git
           git -C src fetch --depth 1 origin "$SRC_REF"
           git -C src checkout --detach FETCH_HEAD
           echo "ausgecheckt: $SRC_REF → $(git -C src rev-parse --short HEAD)"
@@ -138,8 +138,12 @@ jobs:
             IdentitiesOnly yes
           EOF
           chmod 600 "$HOME/.ssh/config"
-          git config --global url."git@github-trace:subunit-ai/trace-tauri.git".insteadOf \
+          # Org-Umzug: SSH-Pfad kanonisch (Alias github-trace bleibt). Beide https-Schreibweisen
+          # umleiten, denn bestehende Quell-Pins (Cargo.toml) nennen noch subunit-ai/trace-tauri.git.
+          git config --global --add url."git@github-trace:Subunit-UG/trace-tauri.git".insteadOf \
             "https://github.com/subunit-ai/trace-tauri.git"
+          git config --global --add url."git@github-trace:Subunit-UG/trace-tauri.git".insteadOf \
+            "https://github.com/Subunit-UG/trace-tauri.git"
           echo "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> "$GITHUB_ENV"
 
       - name: Rust ARM64 prüfen (locked)
@@ -184,7 +188,7 @@ jobs:
         shell: bash
         run: |
           rm -f "$HOME/.ssh/trace_src"
-          git config --global --unset-all url.git@github-trace:subunit-ai/trace-tauri.git.insteadOf || true
+          git config --global --unset-all url.git@github-trace:Subunit-UG/trace-tauri.git.insteadOf || true
 
       - name: Verschlüsselte ARM64-Fehlerdiagnostik bereitstellen
         if: failure() && inputs.diagnostic_public_key_base64 != ''

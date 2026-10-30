@@ -24,10 +24,10 @@ export function validateFleetSourceWorkflow(workflow, checkoutHelper) {
   }
 
   for (const [component, input, secret, repository] of [
-    ["u1-chat", "u1_chat_sha", "U1_CHAT_SOURCE_DEPLOY_KEY", "subunit-ai/u1-chat.git"],
-    ["atlas", "atlas_sha", "ATLAS_SOURCE_DEPLOY_KEY", "subunit-ai/atlas.git"],
-    ["subunit-auth", "auth_sha", "AUTH_SOURCE_DEPLOY_KEY", "subunit-ai/subunit-auth.git"],
-    ["echo", "echo_sha", "ECHO_SOURCE_DEPLOY_KEY", "subunit-ai/echo.git"],
+    ["u1-chat", "u1_chat_sha", "U1_CHAT_SOURCE_DEPLOY_KEY", "Subunit-UG/infra-u1-chat.git"],
+    ["atlas", "atlas_sha", "ATLAS_SOURCE_DEPLOY_KEY", "Subunit-UG/infra-atlas.git"],
+    ["subunit-auth", "auth_sha", "AUTH_SOURCE_DEPLOY_KEY", "Subunit-UG/infra-auth.git"],
+    ["echo", "echo_sha", "ECHO_SOURCE_DEPLOY_KEY", "Subunit-UG/echo-server.git"],
   ]) {
     require(workflow.includes(`${input}:`), `${component}: immutable SHA input is missing`);
     require(workflow.includes(`secrets.${secret}`), `${component}: dedicated read-only deploy-key secret is missing`);

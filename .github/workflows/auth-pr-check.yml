@@ -84,7 +84,7 @@ jobs:
       - name: subunit-auth exakt und read-only auschecken
         env:
           SOURCE_DEPLOY_KEY: ${{ secrets.AUTH_SOURCE_DEPLOY_KEY }}
-        run: bash gate/scripts/checkout-private-source.sh subunit-auth git@github.com:subunit-ai/subunit-auth.git "$SOURCE_SHA"
+        run: bash gate/scripts/checkout-private-source.sh subunit-auth git@github.com:Subunit-UG/infra-auth.git "$SOURCE_SHA"
       - name: Abhaengigkeiten installieren
         working-directory: private/subunit-auth
         run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" auth-install bun install --frozen-lockfile
