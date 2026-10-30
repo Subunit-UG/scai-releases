@@ -76,7 +76,7 @@ jobs:
       - name: Gepinntes Bun einrichten
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2, immutable
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.4
       - name: Gepinntes Python einrichten
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5, immutable
         with:
@@ -94,6 +94,11 @@ jobs:
         env:
           SOURCE_DEPLOY_KEY: ${{ secrets.ATLAS_SOURCE_DEPLOY_KEY }}
         run: bash gate/scripts/checkout-private-source.sh atlas git@github.com:subunit-ai/atlas.git "$SOURCE_SHA"
+      # Setup stays before private source; the confidential check fails closed
+      # when CI drifts from the API/worker runtime pinned in the source.
+      - name: Bun-Pin der Quelle pruefen
+        working-directory: private/atlas/atlas-api
+        run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" atlas-bun-pin bash "$GITHUB_WORKSPACE/gate/scripts/verify-bun-runtime-pin.sh" bun-runtime.pin
       - name: Web installieren, pruefen und bauen
         working-directory: private/atlas/atlas-web
         run: |
