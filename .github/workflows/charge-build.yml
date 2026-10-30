@@ -132,15 +132,28 @@ jobs:
           echo "CHARGE_KEYCHAIN=$kc" >> "$GITHUB_ENV"
 
       - name: Bundle bauen und signieren
+        id: charge_build
         working-directory: private/subunit-charge
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # Fehlerausgabe nur verschluesselt an den Einmal-Schluessel (Muster u1-chat-pr-check).
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.recipient_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ runner.temp }}/charge-build-diagnostic.json
         shell: bash
         run: |
           set -euo pipefail
           CHARGE_SIGN_ID="$APPLE_SIGNING_IDENTITY" \
             bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" charge-build ./build.sh release
           test -d "dist/Subunit Charge.app"
+
+      - name: Verschluesselte Bau-Diagnose hochladen
+        if: failure() && steps.charge_build.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: subunit-charge-encrypted-diagnostic-${{ inputs.source_sha }}
+          path: ${{ runner.temp }}/charge-build-diagnostic.json
+          retention-days: 7
+          if-no-files-found: ignore
 
       - name: Signatur, Version, Team und Dienst pruefen
         working-directory: private/subunit-charge
