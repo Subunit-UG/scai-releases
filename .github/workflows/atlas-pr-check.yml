@@ -120,7 +120,7 @@ jobs:
         working-directory: private/atlas/atlas-api
         run: |
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" atlas-api-migrations bash -c 'bun run migrate && bun run migrate'
-          bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" atlas-api-tests bun test --isolate
+          bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" atlas-api-tests bun run test:ci
       - name: Verschluesselte Atlas-Testdiagnose bereitstellen
         if: failure() && steps.api_tests.outcome == 'failure' && inputs.diagnostic_public_key_base64 != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
