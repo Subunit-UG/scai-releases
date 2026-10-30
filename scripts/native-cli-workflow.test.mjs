@@ -30,7 +30,7 @@ for(const [name,before,after] of [
  ['unbounded timeout','timeout-minutes: 10','timeout-minutes: 60'],
  ['credentials retained','persist-credentials: false','persist-credentials: true'],
  ['request validation skipped','node gate/scripts/validate-native-cli-request.mjs','echo skipped'],
- ['wrong private repo','git@github.com:subunit-ai/subunit-scai.git','git@github.com:attacker/source.git'],
+ ['wrong private repo','git@github.com:Subunit-UG/scai-app.git','git@github.com:attacker/source.git'],
  ['mutable checkout','"$SOURCE_SHA"','main'],
  ['failure ignored','id: native_cli_proof','id: native_cli_proof\n        continue-on-error: true'],
  ['proof skipped','id: native_cli_proof','id: native_cli_proof\n        if: false'],
@@ -48,7 +48,7 @@ for(const [mode,code] of [[undefined,0],['success',37],['late-a-failure-discover
  const output=join(temp,'outputs'),r=spawnSync('bash',[new URL('./run-native-cli-proof.sh',import.meta.url).pathname],{cwd,encoding:'utf8',env:{...process.env,...(mode===undefined?{}:{SCAI_NATIVE_CLI_PROOF_MODE:mode}),PATH:`${bin}:${process.env.PATH}`,RUNNER_TEMP:temp,GITHUB_OUTPUT:output,SOURCE_SHA:sha,REQUEST_ID:request,SOURCE_DEPLOY_KEY:'',GIT_SSH_COMMAND:'',CANARY_HOST_ENV:'do-not-inherit',SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64:publicBase64}});
  assert.equal(r.status,code,r.stderr);assert.equal(readFileSync(output,'utf8'),'encrypted_visual_receipt=true\n');assert.equal(r.stdout,'');const envelope=JSON.parse(readFileSync(join(temp,'scai-native-cli-encrypted-proof.json')));assert.ok(envelope.ciphertext);assert.equal('files' in envelope,false);
 });
-for(const [repo,status] of [['git@github.com:subunit-ai/subunit-scai.git',65],['git@github.com:subunit-ai/atlas.git',64]])test(`SCAI checkout allowlist fails closed for ${repo}`,()=>{
+for(const [repo,status] of [['git@github.com:Subunit-UG/scai-app.git',65],['git@github.com:Subunit-UG/infra-atlas.git',64]])test(`SCAI checkout allowlist fails closed for ${repo}`,()=>{
  const r=spawnSync('bash',[new URL('./checkout-private-source.sh',import.meta.url).pathname,'subunit-scai',repo,sha],{encoding:'utf8',env:{...process.env,SOURCE_DEPLOY_KEY:''}});assert.equal(r.status,status);assert.doesNotMatch(r.stdout+r.stderr,/fetch|PRIVATE/);
 });
 

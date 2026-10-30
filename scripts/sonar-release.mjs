@@ -8,7 +8,8 @@ import { execFileSync, spawn } from 'node:child_process';
 import { assertMonotonic } from './assert-semver-monotonic.mjs';
 import { exactKeys, releaseAssetUrl } from './release-authorization.mjs';
 
-export const REPOSITORY = 'subunit-ai/sonar-releases';
+// Liegt seit dem Org-Umzug unter Subunit-UG (gleiche Repo-ID 1296325507).
+export const REPOSITORY = 'Subunit-UG/sonar-releases';
 export const TARGETS = ['aarch64-apple-darwin', 'x86_64-apple-darwin', 'x86_64-pc-windows-msvc', 'aarch64-pc-windows-msvc', 'x86_64-unknown-linux-gnu'];
 const sha = value => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value) && value.length === 40;
 const tag = value => typeof value === 'string' && /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value) && !value.endsWith('\n');

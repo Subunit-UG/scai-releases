@@ -42,7 +42,7 @@ exit 2
       PATH: `${bin}${delimiter}${process.env.PATH}`,
       FAKE_GH_LOG: log,
       FAKE_RELEASE_JSON: JSON.stringify({ isDraft, tagName, body: boundBody }),
-      REPO: "subunit-ai/scai-releases",
+      REPO: "Subunit-UG/scai-releases",
       TAG: "v1.2.3",
       SOURCE_SHA: sourceSha,
       RELEASE_ID: releaseId,
@@ -55,7 +55,7 @@ exit 2
 test("matching bound draft permits the intentional retry upload", () => {
   const result = runGuard();
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.calls, /release upload v1\.2\.3 .*artifact\.bin -R subunit-ai\/scai-releases --clobber/);
+  assert.match(result.calls, /release upload v1\.2\.3 .*artifact\.bin -R Subunit-UG\/scai-releases --clobber/);
 });
 
 test("published release is immutable", () => {

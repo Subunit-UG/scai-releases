@@ -11,7 +11,7 @@
 # Repo hat, kann ihn auslösen.
 #
 # AUSGELÖST VON: scripts/session/ship.sh im Quell-Repo (vor dem Squash-Merge).
-#   gh workflow run pr-check.yml -R subunit-ai/scai-releases -f ref=<40sha> -f request_id=<uuidv4>
+#   gh workflow run pr-check.yml -R Subunit-UG/scai-releases -f ref=<40sha> -f request_id=<uuidv4>
 # ship.sh wartet auf die Conclusion dieses Runs und merged nur bei grün.
 
 name: PR Check (Quell-Repo)
@@ -1412,8 +1412,12 @@ jobs:
             IdentitiesOnly yes
           EOF
           chmod 600 "$HOME/.ssh/config"
-          git config --global url."git@github-trace:subunit-ai/trace-tauri.git".insteadOf \
+          # Org-Umzug: SSH-Pfad kanonisch (Alias github-trace bleibt). Beide https-Schreibweisen
+          # umleiten, denn bestehende Quell-Pins (Cargo.toml) nennen noch subunit-ai/trace-tauri.git.
+          git config --global --add url."git@github-trace:Subunit-UG/trace-tauri.git".insteadOf \
             "https://github.com/subunit-ai/trace-tauri.git"
+          git config --global --add url."git@github-trace:Subunit-UG/trace-tauri.git".insteadOf \
+            "https://github.com/Subunit-UG/trace-tauri.git"
           echo "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> "$GITHUB_ENV"
 
       - name: cargo test (Sidecar-Trust-Modell + Takoru + verify-Suite)
@@ -1461,7 +1465,7 @@ jobs:
         shell: bash
         run: |
           rm -f "$HOME/.ssh/trace_src"
-          git config --global --unset-all url.git@github-trace:subunit-ai/trace-tauri.git.insteadOf || true
+          git config --global --unset-all url.git@github-trace:Subunit-UG/trace-tauri.git.insteadOf || true
 
   trace-standalone:
     needs: preflight
@@ -1518,7 +1522,7 @@ jobs:
           ssh-keyscan -t ed25519,rsa github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null
           export GIT_SSH_COMMAND="ssh -i $key_file -o IdentitiesOnly=yes"
           git init trace-src
-          git -C trace-src remote add origin git@github.com:subunit-ai/trace-tauri.git
+          git -C trace-src remote add origin git@github.com:Subunit-UG/trace-tauri.git
           git -C trace-src fetch --depth 1 -- origin "$SRC_REF"
           git -C trace-src checkout --detach FETCH_HEAD
           ACTUAL_SHA=$(git -C trace-src rev-parse HEAD)
@@ -1877,8 +1881,12 @@ jobs:
             IdentitiesOnly yes
           EOF
           chmod 600 "$HOME/.ssh/config"
-          git config --global url."git@github-trace:subunit-ai/trace-tauri.git".insteadOf \
+          # Org-Umzug: SSH-Pfad kanonisch (Alias github-trace bleibt). Beide https-Schreibweisen
+          # umleiten, denn bestehende Quell-Pins (Cargo.toml) nennen noch subunit-ai/trace-tauri.git.
+          git config --global --add url."git@github-trace:Subunit-UG/trace-tauri.git".insteadOf \
             "https://github.com/subunit-ai/trace-tauri.git"
+          git config --global --add url."git@github-trace:Subunit-UG/trace-tauri.git".insteadOf \
+            "https://github.com/Subunit-UG/trace-tauri.git"
           echo "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> "$GITHUB_ENV"
 
       # Kein Paket, Tag oder Release: dieses Gate kompiliert exakt die nativen
@@ -2031,4 +2039,4 @@ jobs:
         shell: bash
         run: |
           rm -f "$HOME/.ssh/trace_src"
-          git config --global --unset-all url.git@github-trace:subunit-ai/trace-tauri.git.insteadOf || true
+          git config --global --unset-all url.git@github-trace:Subunit-UG/trace-tauri.git.insteadOf || true

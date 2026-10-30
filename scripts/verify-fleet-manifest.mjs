@@ -2,7 +2,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { validateReleaseAuthorization } from "./release-authorization.mjs";
+import { isApprovedOwner, validateReleaseAuthorization } from "./release-authorization.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const EXPECTED_PINS = [
@@ -51,6 +51,13 @@ const FULL_SHA = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const RELEASE_ID = /^scai-candidate-[0-9]{4}-[0-9]{2}-[0-9]{2}\.[0-9]+$/;
 const HTTPS = /^https:\/\//;
+// Org-Umzug (TJ 2026-10-30): Pins dürfen auf subunit-ai/<repo> (historisch, weitergeleitet)
+// oder Subunit-UG/<repo> zeigen; der Owner kommt nur aus der gemeinsamen Allowlist.
+const GITHUB_REPOSITORY_URL = /^https:\/\/github\.com\/([A-Za-z0-9-]+)\/[A-Za-z0-9._-]+$/;
+const isApprovedRepositoryUrl = (value) => {
+  const match = typeof value === "string" ? GITHUB_REPOSITORY_URL.exec(value) : null;
+  return Boolean(match && isApprovedOwner(match[1]));
+};
 
 function exactKeys(value, expected) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -104,7 +111,7 @@ export function validateManifest(manifest, filename = "<memory>") {
   for (const name of EXPECTED_PINS) {
     const pin = manifest.pins?.[name] ?? {};
     require(exactKeys(pin, PIN_FIELDS), `${name} fields must match schema exactly`);
-    require(/^https:\/\/github\.com\/subunit-ai\/[A-Za-z0-9._-]+$/.test(pin.repository ?? ""), `${name}.repository must be an approved GitHub repository`);
+    require(isApprovedRepositoryUrl(pin.repository), `${name}.repository must be an approved GitHub repository`);
     require(FULL_SHA.test(pin.sha ?? ""), `${name}.sha must be a full 40-character Git SHA`);
     require(nonEmpty(pin.branch), `${name}.branch is required`);
     require(pin.pr_url === "" || HTTPS.test(pin.pr_url ?? ""), `${name}.pr_url must be empty or HTTPS`);

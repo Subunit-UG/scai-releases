@@ -145,3 +145,37 @@ test("a cosmetic top-level PASS fails closed while evidence remains open", () =>
   assert.match(errors, /PASS requires governance status PASS/);
   assert.match(errors, /PASS requires operations status PASS/);
 });
+
+// Org-Umzug (TJ 2026-10-30): Pins dürfen genau auf subunit-ai/<repo> (historisch) oder
+// Subunit-UG/<repo> zeigen, Groß-/Kleinschreibung des Owners egal. Alles andere bleibt zu.
+for (const repository of [
+  "https://github.com/subunit-ai/subunit-scai",
+  "https://github.com/Subunit-UG/scai-app",
+  "https://github.com/subunit-ug/infra-atlas",
+  "https://github.com/SUBUNIT-AI/echo",
+]) test(`Pin-Owner nach Org-Umzug zugelassen: ${repository}`, () => {
+  const manifest = clone();
+  manifest.pins.scai_source.repository = repository;
+  manifest.pins.atlas.repository = repository;
+  assert.deepEqual(validateManifest(manifest), []);
+});
+
+for (const repository of [
+  "https://github.com/attacker/scai-app",
+  "https://github.com/Subunit-UG-evil/scai-app",
+  "https://github.com/evil-subunit-ai/scai-app",
+  "https://github.com/subunit/scai-app",
+  "https://github.com/Subunit-UG/scai-app/",
+  "https://github.com/Subunit-UG/scai-app/pull/1",
+  "https://github.com/Subunit-UG",
+  "https://github.com.attacker.invalid/Subunit-UG/scai-app",
+  "http://github.com/Subunit-UG/scai-app",
+  "https://github.com/subunit-a\u0131/scai-app",
+  "https://github.com/subunit-a\u0130/scai-app",
+  "https://github.com/subunit-ai/scai-app\n",
+  "",
+]) test(`fremder oder unscharfer Pin-Owner abgewiesen: ${JSON.stringify(repository)}`, () => {
+  const manifest = clone();
+  manifest.pins.scai_source.repository = repository;
+  assert.match(validateManifest(manifest).join("\n"), /scai_source\.repository must be an approved GitHub repository/);
+});

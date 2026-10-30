@@ -66,7 +66,7 @@ case "$1" in
     fi ;;
 esac`);
       const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: testHome, RUNNER_TEMP: runner, GITHUB_WORKSPACE: workspace, GITHUB_ENV: githubEnv, GITHUB_OUTPUT: output, SOURCE_DEPLOY_KEY: 'PRIVATE_DEPLOY_KEY_CANARY', MOCK_FAILURE: failure, MOCK_PLATFORM: platform, MOCK_SHA: SHA };
-      const result = spawnSync('bash', [HELPER, 'sonar-tauri', 'git@github.com:subunit-ai/sonar-tauri.git', SHA], { env, encoding: 'utf8', timeout: 10000 });
+      const result = spawnSync('bash', [HELPER, 'sonar-tauri', 'git@github.com:Subunit-UG/sonar-tauri.git', SHA], { env, encoding: 'utf8', timeout: 10000 });
       if (failure === 'KILL') assert.equal(result.signal, 'SIGKILL');
       else assert.equal(result.status, { success: 0, init: 20, fetch: 21, detach: 22, drift: 67, TERM: 143, keygen: 19 }[failure], result.stdout + result.stderr);
       assert.doesNotMatch(result.stdout + result.stderr, /PRIVATE_DEPLOY_KEY_CANARY|scai-checkout-credentials/);
@@ -112,16 +112,42 @@ function writeMock(binDir, name, body) {
 test("repository allowlist, immutable SHA and dedicated key fail closed", () => {
   for (const [args, expectedStatus, expectedMessage] of [
     [["u1-chat", "git@github.com:attacker/source.git", SHA], 64, /not allowlisted/],
-    [["u1-chat", "git@github.com:subunit-ai/u1-chat.git", "main"], 64, /40 lowercase hexadecimal/],
-    [["u1-chat", "git@github.com:subunit-ai/u1-chat.git", SHA], 65, /deploy key is missing/],
-    [["subunit-notch", "git@github.com:subunit-ai/subunit-notch.git", SHA], 65, /deploy key is missing/],
-    [["subunit-notch", "git@github.com:subunit-ai/echo.git", SHA], 64, /not allowlisted/],
-    [["subunit-scai", "git@github.com:subunit-ai/subunit-scai.git", SHA], 65, /deploy key is missing/],
-    [["subunit-scai", "git@github.com:subunit-ai/atlas.git", SHA], 64, /not allowlisted/],
+    [["u1-chat", "git@github.com:Subunit-UG/infra-u1-chat.git", "main"], 64, /40 lowercase hexadecimal/],
+    [["u1-chat", "git@github.com:Subunit-UG/infra-u1-chat.git", SHA], 65, /deploy key is missing/],
+    [["subunit-notch", "git@github.com:Subunit-UG/mac-notch.git", SHA], 65, /deploy key is missing/],
+    [["subunit-notch", "git@github.com:Subunit-UG/echo-server.git", SHA], 64, /not allowlisted/],
+    [["subunit-scai", "git@github.com:Subunit-UG/scai-app.git", SHA], 65, /deploy key is missing/],
+    [["subunit-scai", "git@github.com:Subunit-UG/infra-atlas.git", SHA], 64, /not allowlisted/],
   ]) {
     const result = invoke(args);
     assert.equal(result.status, expectedStatus);
     assert.match(result.stdout + result.stderr, expectedMessage);
+    cleanup(result.testRoot);
+  }
+});
+
+// Org-Umzug (TJ 2026-10-30): je Komponente genau der kanonische Subunit-UG-Pfad. Alte
+// subunit-ai-Pfade (nur noch per Weiterleitung), fremde Owner und Doppelgänger werden
+// vor jedem Schlüssel- oder Netzzugriff abgewiesen.
+const CANONICAL_SOURCES = {
+  "u1-chat": "Subunit-UG/infra-u1-chat", atlas: "Subunit-UG/infra-atlas", "subunit-auth": "Subunit-UG/infra-auth",
+  "subunit-scai": "Subunit-UG/scai-app", echo: "Subunit-UG/echo-server", "subunit-notch": "Subunit-UG/mac-notch",
+  "sonar-tauri": "Subunit-UG/sonar-tauri", "bridge-tauri": "Subunit-UG/bridge-tauri", "trace-tauri": "Subunit-UG/trace-tauri",
+};
+for (const [component, repository] of Object.entries(CANONICAL_SOURCES)) test(`Org-Umzug: ${component} nur über ${repository}`, () => {
+  const name = repository.split("/")[1];
+  for (const [source, status] of [
+    [`git@github.com:${repository}.git`, 65],
+    [`git@github.com:subunit-ai/${component}.git`, 64],
+    [`git@github.com:subunit-ai/${name}.git`, 64],
+    [`git@github.com:attacker/${name}.git`, 64],
+    [`git@github.com:Subunit-UG-evil/${name}.git`, 64],
+    [`git@github.com:${repository}.git.evil`, 64],
+    [`https://github.com/${repository}.git`, 64],
+  ]) {
+    const result = invoke([component, source, SHA], { SOURCE_DEPLOY_KEY: "" });
+    assert.equal(result.status, status, `${component} ${source}: ${result.stdout}${result.stderr}`);
+    assert.match(result.stdout + result.stderr, status === 65 ? /deploy key is missing/ : /not allowlisted/);
     cleanup(result.testRoot);
   }
 });
@@ -138,7 +164,7 @@ test("an untrusted GitHub host key is rejected and credential files are cleaned"
   writeMock(binDir, "ssh-keygen", "printf '%s\\n' '256 SHA256:WRONG github.com (ED25519)'");
 
   const secret = "PRIVATE_DEPLOY_KEY_CANARY";
-  const result = spawnSync("bash", [HELPER, "u1-chat", "git@github.com:subunit-ai/u1-chat.git", SHA], {
+  const result = spawnSync("bash", [HELPER, "u1-chat", "git@github.com:Subunit-UG/infra-u1-chat.git", SHA], {
     encoding: "utf8",
     env: {
       ...process.env,
@@ -178,7 +204,7 @@ fi
 `);
 
   const secret = "PRIVATE_DEPLOY_KEY_CANARY";
-  const result = spawnSync("bash", [HELPER, "u1-chat", "git@github.com:subunit-ai/u1-chat.git", SHA], {
+  const result = spawnSync("bash", [HELPER, "u1-chat", "git@github.com:Subunit-UG/infra-u1-chat.git", SHA], {
     encoding: "utf8",
     env: {
       ...process.env,
@@ -224,7 +250,7 @@ fi
 `);
 
   const secret = "PRIVATE_DEPLOY_KEY_CANARY";
-  const result = spawnSync("bash", [HELPER, "echo", "git@github.com:subunit-ai/echo.git", SHA], {
+  const result = spawnSync("bash", [HELPER, "echo", "git@github.com:Subunit-UG/echo-server.git", SHA], {
     encoding: "utf8",
     env: {
       ...process.env,
@@ -272,7 +298,7 @@ fi
 `);
 
   const secret = "PRIVATE_DEPLOY_KEY_CANARY";
-  const result = spawnSync("bash", [HELPER, "u1-chat", "git@github.com:subunit-ai/u1-chat.git", SHA], {
+  const result = spawnSync("bash", [HELPER, "u1-chat", "git@github.com:Subunit-UG/infra-u1-chat.git", SHA], {
     encoding: "utf8",
     env: {
       ...process.env,
@@ -298,7 +324,7 @@ fi
 });
 
 for (const component of ['sonar-tauri', 'bridge-tauri', 'trace-tauri']) test(`Sonar-Quellen verlangen je einen eigenen Deploy-Key: ${component}`, () => {
-  const result = invoke([component, `git@github.com:subunit-ai/${component}.git`, SHA], { SOURCE_DEPLOY_KEY: '' });
+  const result = invoke([component, `git@github.com:Subunit-UG/${component}.git`, SHA], { SOURCE_DEPLOY_KEY: '' });
   assert.equal(result.status, 65);
   cleanup(result.testRoot);
 });
@@ -322,7 +348,7 @@ elif [ "\${3:-}" = rev-parse ]; then
 elif [ "\${3:-}" = fetch ] && [[ "$*" == *refs/tags/* ]]; then exit "$MOCK_TAG_STATUS";
 fi`);
   const secret = 'PRIVATE_DEPLOY_KEY_CANARY';
-  const result = spawnSync('bash', [HELPER, 'bridge-tauri', 'git@github.com:subunit-ai/bridge-tauri.git', SHA, 'v0.4.9'], {
+  const result = spawnSync('bash', [HELPER, 'bridge-tauri', 'git@github.com:Subunit-UG/bridge-tauri.git', SHA, 'v0.4.9'], {
     encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, RUNNER_TEMP: runnerTemp, GITHUB_WORKSPACE: workspace, SOURCE_DEPLOY_KEY: secret, MOCK_GIT_LOG: gitLog, MOCK_SOURCE_SHA: SHA, MOCK_TAG_SHA: tagSha, MOCK_TAG_STATUS: String(fetchStatus) },
   });
   assert.equal(result.status, status, result.stdout + result.stderr);
@@ -380,7 +406,7 @@ elif [ "\${3:-}" = fetch ]; then
   case "$GIT_SSH_COMMAND" in 'ssh -i '*) ;; *) exit 99 ;; esac
   bash -c "$GIT_SSH_COMMAND"
 elif [ "\${3:-}" = rev-parse ]; then printf '%s\\n' "$MOCK_SOURCE_SHA"; fi`);
-    const result = spawnSync('bash', [HELPER, 'sonar-tauri', 'git@github.com:subunit-ai/sonar-tauri.git', SHA], {
+    const result = spawnSync('bash', [HELPER, 'sonar-tauri', 'git@github.com:Subunit-UG/sonar-tauri.git', SHA], {
       encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: testHome, GITHUB_WORKSPACE: 'D:\\a\\work space', RUNNER_TEMP: runner, MOCK_PLATFORM: platform, MOCK_RUNNER: runner, MOCK_WORKSPACE: workspace, MOCK_SOURCE_SHA: SHA, SOURCE_DEPLOY_KEY: 'PRIVATE_DEPLOY_KEY_CANARY', MOCK_GIT_LOG: gitLog, MOCK_SSH_LOG: sshLog, MOCK_FAILURE: failure },
     });
     assert.equal(result.status, failure === 'host' ? 68 : failure === 'fetch' ? 128 : 0, result.stdout + result.stderr);

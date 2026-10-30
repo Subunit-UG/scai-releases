@@ -65,7 +65,7 @@ jobs:
       - name: u1-chat exakt und read-only auschecken
         env:
           SOURCE_DEPLOY_KEY: ${{ secrets.U1_CHAT_SOURCE_DEPLOY_KEY }}
-        run: bash gate/scripts/checkout-private-source.sh u1-chat git@github.com:subunit-ai/u1-chat.git "$SOURCE_SHA"
+        run: bash gate/scripts/checkout-private-source.sh u1-chat git@github.com:Subunit-UG/infra-u1-chat.git "$SOURCE_SHA"
       # Laufzeit = Pin der ausgelieferten Quelle (u1-chat scripts/install-bun-runtime.py). setup-bun laeuft vor dem
       # privaten Checkout (keine Action neben privatem Code); verify-bun-runtime-pin.sh macht jede Abweichung rot
       # (30.10.: CI 1.3.14 gegen live 1.4.4).

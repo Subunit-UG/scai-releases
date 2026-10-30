@@ -43,16 +43,18 @@ if [ -n "$component_tag" ] && ! printf '%s' "$component_tag" | grep -Eq '^v(0|[1
   exit 64
 fi
 
+# Kanonische Pfade nach dem Org-Umzug (TJ 2026-10-30). Der Komponentenname links bleibt
+# der Zielordner private/<component>; Deploy-Keys hängen am Repo, nicht am Pfad.
 case "$component:$source_repo" in
-  u1-chat:git@github.com:subunit-ai/u1-chat.git) ;;
-  atlas:git@github.com:subunit-ai/atlas.git) ;;
-  subunit-auth:git@github.com:subunit-ai/subunit-auth.git) ;;
-  subunit-scai:git@github.com:subunit-ai/subunit-scai.git) ;;
-  echo:git@github.com:subunit-ai/echo.git) ;;
-  subunit-notch:git@github.com:subunit-ai/subunit-notch.git) ;;
-  sonar-tauri:git@github.com:subunit-ai/sonar-tauri.git) ;;
-  bridge-tauri:git@github.com:subunit-ai/bridge-tauri.git) ;;
-  trace-tauri:git@github.com:subunit-ai/trace-tauri.git) ;;
+  u1-chat:git@github.com:Subunit-UG/infra-u1-chat.git) ;;
+  atlas:git@github.com:Subunit-UG/infra-atlas.git) ;;
+  subunit-auth:git@github.com:Subunit-UG/infra-auth.git) ;;
+  subunit-scai:git@github.com:Subunit-UG/scai-app.git) ;;
+  echo:git@github.com:Subunit-UG/echo-server.git) ;;
+  subunit-notch:git@github.com:Subunit-UG/mac-notch.git) ;;
+  sonar-tauri:git@github.com:Subunit-UG/sonar-tauri.git) ;;
+  bridge-tauri:git@github.com:Subunit-UG/bridge-tauri.git) ;;
+  trace-tauri:git@github.com:Subunit-UG/trace-tauri.git) ;;
   *)
     echo "component/repository is not allowlisted" >&2
     exit 64

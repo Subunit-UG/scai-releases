@@ -56,7 +56,7 @@ export const NATIVE_CLI_WORKFLOW = [
   "        shell: bash",
   "        env:",
   "          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}",
-  "        run: bash gate/scripts/checkout-private-source.sh subunit-scai git@github.com:subunit-ai/subunit-scai.git \"$SOURCE_SHA\"",
+  "        run: bash gate/scripts/checkout-private-source.sh subunit-scai git@github.com:Subunit-UG/scai-app.git \"$SOURCE_SHA\"",
   "      - name: Hermetic synthetic native CLI proof",
   "        id: native_cli_proof",
   "        working-directory: private/subunit-scai",

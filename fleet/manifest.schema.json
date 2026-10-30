@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/subunit-ai/scai-releases/fleet/manifest.schema.json",
+  "$id": "https://github.com/Subunit-UG/scai-releases/fleet/manifest.schema.json",
   "title": "SCAI Fleet Release Manifest",
   "type": "object",
   "additionalProperties": false,
@@ -87,7 +87,7 @@
       "additionalProperties": false,
       "required": ["repository", "tag", "distribution_policy", "assets"],
       "properties": {
-        "repository": { "const": "subunit-ai/scai-releases" },
+        "repository": { "type": "string", "pattern": "^(?:[Ss][Uu][Bb][Uu][Nn][Ii][Tt]-(?:[Aa][Ii]|[Uu][Gg]))/scai-releases$", "$comment": "Org-Umzug 2026-10-30: genau subunit-ai oder Subunit-UG, Groß-/Kleinschreibung egal" },
         "tag": { "type": "string", "pattern": "^v[0-9A-Za-z.+-]+$" },
         "distribution_policy": { "enum": ["market-ready", "legacy-v0.125"] },
         "assets": {
@@ -111,7 +111,7 @@
       "additionalProperties": false,
       "required": ["repository", "sha", "branch", "pr_url", "merge_status"],
       "properties": {
-        "repository": { "type": "string", "pattern": "^https://github.com/subunit-ai/[A-Za-z0-9._-]+$" },
+        "repository": { "type": "string", "pattern": "^https://github\\.com/(?:[Ss][Uu][Bb][Uu][Nn][Ii][Tt]-(?:[Aa][Ii]|[Uu][Gg]))/[A-Za-z0-9._-]+$", "$comment": "Org-Umzug 2026-10-30: genau subunit-ai oder Subunit-UG, Groß-/Kleinschreibung egal" },
         "sha": { "$ref": "#/$defs/sha" },
         "branch": { "type": "string", "minLength": 1 },
         "pr_url": { "$ref": "#/$defs/uriOrEmpty" },

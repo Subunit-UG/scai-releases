@@ -736,8 +736,12 @@ jobs:
             IdentitiesOnly yes
           EOF
           chmod 600 "$HOME/.ssh/config"
-          git config --global url."git@github-trace:subunit-ai/trace-tauri.git".insteadOf \
+          # Org-Umzug: SSH-Pfad kanonisch (Alias github-trace bleibt). Beide https-Schreibweisen
+          # umleiten, denn bestehende Quell-Pins (Cargo.toml) nennen noch subunit-ai/trace-tauri.git.
+          git config --global --add url."git@github-trace:Subunit-UG/trace-tauri.git".insteadOf \
             "https://github.com/subunit-ai/trace-tauri.git"
+          git config --global --add url."git@github-trace:Subunit-UG/trace-tauri.git".insteadOf \
+            "https://github.com/Subunit-UG/trace-tauri.git"
           echo "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> "$GITHUB_ENV"
 
       # Das frühere tauri-action lief direkt im PUBLIC Workflow-Log. Rust-/TS-
@@ -1115,7 +1119,7 @@ jobs:
         shell: bash
         run: |
           rm -f "$HOME/.ssh/trace_src"
-          git config --global --unset-all url.git@github-trace:subunit-ai/trace-tauri.git.insteadOf || true
+          git config --global --unset-all url.git@github-trace:Subunit-UG/trace-tauri.git.insteadOf || true
 
   # latest.json FINALISIEREN — deterministisch aus den fertigen Signatur-Assets.
   # Matrix-Jobs laden ausschließlich ihre eigenen Installer und .sig-Dateien hoch;
@@ -1175,8 +1179,12 @@ jobs:
             IdentitiesOnly yes
           EOF
           chmod 600 "$HOME/.ssh/config"
-          git config --global url."git@github-trace:subunit-ai/trace-tauri.git".insteadOf \
+          # Org-Umzug: SSH-Pfad kanonisch (Alias github-trace bleibt). Beide https-Schreibweisen
+          # umleiten, denn bestehende Quell-Pins (Cargo.toml) nennen noch subunit-ai/trace-tauri.git.
+          git config --global --add url."git@github-trace:Subunit-UG/trace-tauri.git".insteadOf \
             "https://github.com/subunit-ai/trace-tauri.git"
+          git config --global --add url."git@github-trace:Subunit-UG/trace-tauri.git".insteadOf \
+            "https://github.com/Subunit-UG/trace-tauri.git"
           echo "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> "$GITHUB_ENV"
 
       - name: Vollständige Node- und Rust-SBOM erzeugen und zusammenführen
@@ -1445,4 +1453,4 @@ jobs:
         if: always()
         run: |
           rm -f "$HOME/.ssh/trace_src"
-          git config --global --unset-all url.git@github-trace:subunit-ai/trace-tauri.git.insteadOf || true
+          git config --global --unset-all url.git@github-trace:Subunit-UG/trace-tauri.git.insteadOf || true

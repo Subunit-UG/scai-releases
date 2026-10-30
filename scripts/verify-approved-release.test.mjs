@@ -10,7 +10,9 @@ import { verifyApprovedRelease } from "./verify-approved-release.mjs";
 import { validateManifest } from "./verify-fleet-manifest.mjs";
 import { releaseAssetNames, validateReleaseAuthorization } from "./release-authorization.mjs";
 
-const repository = "subunit-ai/scai-releases";
+// Kanonisch seit dem Org-Umzug (TJ 2026-10-30); LEGACY ist die weitergeleitete alte Adresse.
+const repository = "Subunit-UG/scai-releases";
+const LEGACY = "subunit-ai/scai-releases";
 const tag = "v1.2.3";
 const source = "a".repeat(40);
 const releaseId = "scai-candidate-2026-09-15.1";
@@ -32,7 +34,10 @@ const updaterFiles = {
   "linux-x86_64": "SCAI_1.2.3_amd64.AppImage", "linux-x86_64-appimage": "SCAI_1.2.3_amd64.AppImage", "linux-x86_64-deb": "SCAI_1.2.3_amd64.deb",
 };
 
-function fixture(t, policy = "market-ready") {
+function fixture(t, policy = "market-ready", repos = {}) {
+  // Schreibweise je Quelle: Freigabe, Draft-API, latest.json und Manifest-Artefakte.
+  const spell = { approval: repository, remote: repository, updater: repository, artifacts: repository, ...repos };
+  const at = (repo, name) => `https://github.com/${repo}/releases/download/${tag}/${name}`;
   const root = mkdtempSync(join(tmpdir(), "scai-approved-release-test-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const dir = join(root, "assets");
@@ -55,24 +60,24 @@ function fixture(t, policy = "market-ready") {
   contents.set("scai.cdx.json", Buffer.from('{"bomFormat":"CycloneDX"}\n'));
   for (const target of targets) contents.set(`runtime-evidence-${target}.json`, Buffer.from('{"fixture":true}\n'));
   for (const target of targets.slice(0, 4)) contents.set(`signing-evidence-${target}.json`, Buffer.from(JSON.stringify({ status: "pass", platform: target, distribution_policy: policy })));
-  const latest = { version: "1.2.3", source_sha: source, platforms: Object.fromEntries(Object.entries(updaterFiles).map(([key, name]) => [key, { url: url(name), signature: contents.get(`${name}.sig`).toString().trim() }])) };
+  const latest = { version: "1.2.3", source_sha: source, platforms: Object.fromEntries(Object.entries(updaterFiles).map(([key, name]) => [key, { url: at(spell.updater, name), signature: contents.get(`${name}.sig`).toString().trim() }])) };
   contents.set("latest.json", Buffer.from(JSON.stringify(latest)));
-  manifest.authorized_release = { repository, tag, distribution_policy: policy, assets: [] };
+  manifest.authorized_release = { repository: spell.approval, tag, distribution_policy: policy, assets: [] };
   const release = { tag_name: tag, draft: true, prerelease: false, body: `Source-SHA: ${source}\nFleet-Release-ID: ${releaseId}\nDistribution-Policy: ${policy}`, assets: [] };
   const sums = () => [...contents].filter(([name]) => name !== "SHA256SUMS").sort(([a], [b]) => a.localeCompare(b)).map(([name, bytes]) => `${hash(bytes)}  ${name}\n`).join("");
   function approve({ replaceSums = true } = {}) {
     if (replaceSums) contents.set("SHA256SUMS", Buffer.from(sums()));
-    manifest.authorized_release.assets = [...contents].map(([name, bytes]) => ({ name, url: url(name), sha256: hash(bytes) }));
-    release.assets = [...contents].map(([name, bytes]) => ({ name, browser_download_url: url(name), digest: `sha256:${hash(bytes)}`, state: "uploaded", size: bytes.length }));
+    manifest.authorized_release.assets = [...contents].map(([name, bytes]) => ({ name, url: at(spell.approval, name), sha256: hash(bytes) }));
+    release.assets = [...contents].map(([name, bytes]) => ({ name, browser_download_url: at(spell.remote, name), digest: `sha256:${hash(bytes)}`, state: "uploaded", size: bytes.length }));
     for (const [name, bytes] of contents) writeFileSync(join(dir, name), bytes);
   }
   approve();
   manifest.artifacts.status = "pass";
   for (const [platform, [installer, signature, target]] of Object.entries(platformFiles)) Object.assign(manifest.artifacts.platforms[platform], {
-    status: "pass", artifact_url: url(installer), sha256: hash(contents.get(installer)), updater_signature_url: url(signature), updater_signature_verified: true,
+    status: "pass", artifact_url: at(spell.artifacts, installer), sha256: hash(contents.get(installer)), updater_signature_url: at(spell.artifacts, signature), updater_signature_verified: true,
     code_signature_status: platform === "linux_x64" ? "not_applicable" : "pass", code_signer: platform === "linux_x64" ? "" : "fixture signer",
-    code_signature_evidence_url: platform === "linux_x64" ? "" : url(`signing-evidence-${target}.json`),
-    sbom_url: url("scai.cdx.json"), sbom_sha256: hash(contents.get("scai.cdx.json")), provenance_url: "https://evidence.invalid/provenance", provenance_verified: true,
+    code_signature_evidence_url: platform === "linux_x64" ? "" : at(spell.artifacts, `signing-evidence-${target}.json`),
+    sbom_url: at(spell.artifacts, "scai.cdx.json"), sbom_sha256: hash(contents.get("scai.cdx.json")), provenance_url: "https://evidence.invalid/provenance", provenance_verified: true,
   });
   assert.deepEqual(validateManifest(manifest), [], "synthetic PASS fixture must meet every existing Fleet gate");
   assert.deepEqual(releaseAssetNames(tag), [...contents.keys()].sort());
@@ -126,6 +131,41 @@ for (const [name, mutate] of [
 ]) test(`${name}: reject publication`, async t => {
   const f = fixture(t); mutate(f);
   await assert.rejects(f.verify());
+});
+
+// Org-Umzug (TJ 2026-10-30): github.repository und browser_download_url liefern nach dem
+// Umzug Subunit-UG, Freigaben/Drafts/latest.json von vorher tragen subunit-ai. Beide
+// Schreibweisen desselben Repos müssen bestehen, jeder andere Owner bleibt zu.
+for (const [label, repos, workflowRepository] of [
+  ["Freigabe vor dem Umzug, Veröffentlichung danach", { approval: LEGACY, updater: LEGACY, artifacts: LEGACY }, repository],
+  ["Freigabe nach dem Umzug, Draft noch mit alter Adresse", { remote: LEGACY, updater: LEGACY }, repository],
+  ["Workflow liefert noch den alten Namen", {}, LEGACY],
+  ["Groß-/Kleinschreibung des Owners egal", { approval: "SUBUNIT-AI/scai-releases", remote: "subunit-ug/scai-releases", updater: "Subunit-ug/scai-releases", artifacts: "subunit-AI/scai-releases" }, "SUBUNIT-UG/scai-releases"],
+]) test(`Org-Umzug: ${label} besteht`, async t => {
+  const f = fixture(t, "market-ready", repos);
+  assert.deepEqual(await f.verify({ repository: workflowRepository }), { scope: "approved-release-bytes", assets: 26, updaterTargets: 11, policy: "market-ready" });
+  assert.deepEqual(await f.verify({ repository: workflowRepository, assetDir: undefined }), { scope: "remote-metadata-only", assets: 26, policy: "market-ready" });
+});
+
+const foreignOwner = (value, owner = "attacker") => value.replace(`https://github.com/${repository}/`, `https://github.com/${owner}/scai-releases/`);
+for (const [label, mutate, extra, reason] of [
+  ["Workflow-Repo mit fremdem Owner", () => {}, { repository: "attacker/scai-releases" }, /repository differs from approval/],
+  ["Workflow-Repo mit Doppelgänger-Owner", () => {}, { repository: "Subunit-UG-evil/scai-releases" }, /repository differs from approval/],
+  ["Workflow-Repo mit anderem Namen", () => {}, { repository: "Subunit-UG/scai-releases-fork" }, /repository differs from approval/],
+  ["Draft-URL mit fremdem Owner", f => { f.release.assets[0].browser_download_url = foreignOwner(f.release.assets[0].browser_download_url); }, {}, /remote URL differs/],
+  ["Draft-URL mit Doppelgänger-Owner", f => { f.release.assets[0].browser_download_url = foreignOwner(f.release.assets[0].browser_download_url, "evil-subunit-ai"); }, {}, /remote URL differs/],
+  ["Installer-URL im Manifest mit fremdem Owner", f => { const p = f.manifest.artifacts.platforms.macos_arm64; p.artifact_url = foreignOwner(p.artifact_url); }, {}, /installer URL differs from approval/],
+  ["Updater-URL mit fremdem Owner", f => {
+    f.latest.platforms["darwin-aarch64"].url = foreignOwner(f.latest.platforms["darwin-aarch64"].url);
+    f.contents.set("latest.json", Buffer.from(JSON.stringify(f.latest))); f.approve();
+  }, {}, /wrong updater asset URL/],
+  ["in sich konsistente Freigabe für fremden Owner", f => {
+    const approval = f.manifest.authorized_release; approval.repository = "attacker/scai-releases";
+    for (const asset of approval.assets) asset.url = foreignOwner(asset.url);
+  }, {}, /Fleet manifest must satisfy all existing gates/],
+]) test(`Org-Umzug: ${label} wird abgewiesen`, async t => {
+  const f = fixture(t); mutate(f);
+  await assert.rejects(f.verify(extra), reason);
 });
 
 for (const platform of Object.keys(platformFiles)) test(`${platform}: old installer hash cannot differ from the complete approval inventory`, async t => {
@@ -236,8 +276,9 @@ function workflowCommands(name) {
 const verifyCommands = workflowCommands("Draft, Bindung und sämtliche Asset-Digests verifizieren");
 const publishCommands = workflowCommands("Geprüften Draft veröffentlichen");
 
-for (const scenario of ["success", "wrong_policy", "changed_bytes", "late_digest", "initial_downgrade", "late_downgrade", "wrong_tag", "api_failure"]) test(`real publisher steps: ${scenario} cannot bypass approval`, t => {
-  const f = fixture(t);
+for (const scenario of ["success", "legacy_approval", "wrong_policy", "changed_bytes", "late_digest", "initial_downgrade", "late_downgrade", "wrong_tag", "api_failure"]) test(`real publisher steps: ${scenario} cannot bypass approval`, t => {
+  // legacy_approval: Freigabe vor dem Umzug (subunit-ai), Workflow danach (REPO=Subunit-UG).
+  const f = scenario === "legacy_approval" ? fixture(t, "market-ready", { approval: LEGACY, updater: LEGACY, artifacts: LEGACY }) : fixture(t);
   if (scenario === "wrong_policy") f.release.body = f.release.body.replace("market-ready", "legacy-v0.125");
   if (scenario === "changed_bytes") {
     f.contents.set("SCAI_aarch64.app.tar.gz", Buffer.from("unapproved replacement"));
@@ -292,7 +333,7 @@ writeFileSync(env.FIXTURE_STATE, JSON.stringify(state));
   assert.ifError(result.error);
   const calls = readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line));
   const edits = calls.filter(args => args[0] === "release" && args[1] === "edit");
-  if (scenario === "success") {
+  if (scenario === "success" || scenario === "legacy_approval") {
     assert.equal(result.status, 0, result.stdout + result.stderr);
     assert.equal(edits.length, 1);
     assert.match(result.stdout, /approved-release-bytes/);
