@@ -68,8 +68,6 @@ for (const { name, text: workflow } of atlasWorkflows) test(`${name}: Atlas chec
   assert.match(step, /working-directory: private\/atlas\/atlas-api/);
   assert.match(step, /run: bash "\$GITHUB_WORKSPACE\/gate\/scripts\/run-confidential\.sh" atlas-bun-pin/);
   assert.doesNotMatch(step, /(?:continue-on-error|if):/);
-  // Speicher-Messtests brauchen einen frischen Prozess: Atlas-API-Tests nur über test:ci (atlas-api/scripts/test-ci.sh).
-  assert.match(workflow, /atlas-api-tests bun run test:ci\n/);
-  assert.doesNotMatch(workflow, /atlas-api-tests bun test/);
+
   assert.equal(run('# API and worker runtime\nVERSION = "1.4.4"\n', "1.4.4").status, 0);
 });

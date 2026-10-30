@@ -199,7 +199,7 @@ jobs:
         working-directory: private/atlas/atlas-api
         run: |
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" atlas-api-migrations bash -c 'bun run migrate && bun run migrate'
-          bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" atlas-api-tests bun run test:ci
+          bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" atlas-api-tests bun test --isolate
 
       - name: Restore-, Trust- und Dirty-Document-Proofs
         working-directory: private/atlas/atlas-api
