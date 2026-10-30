@@ -1,0 +1,199 @@
+name: Subunit Charge Signed Build (private source)
+
+# Baut und signiert Subunit Charge (App + root-Hilfsdienst) aus einem exakt
+# gepinnten Commit von Subunit-UG/subunit-charge. Muster: notch-build.yml.
+# Quellzugang nur lesend über die GitHub-App CHARGE_READ (genau dieses Repo);
+# der Token wird vor dem Bau widerrufen. Ausgabe nur im verschlüsselten Umschlag.
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Vollstaendiger subunit-charge-Commit-SHA"
+        required: true
+        type: string
+      version:
+        description: "Erwartete CFBundleShortVersionString (z. B. 1.0.0)"
+        required: true
+        type: string
+      recipient_public_key_base64:
+        description: "Einmal-RSA-Public-Key (PEM, base64, >= 3072 Bit) fuer den verschluesselten Umschlag"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: charge-build-${{ inputs.source_sha }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Subunit Charge bauen und signieren
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      EXPECTED_VERSION: ${{ inputs.version }}
+      RECIPIENT_PUBLIC_KEY_BASE64: ${{ inputs.recipient_public_key_base64 }}
+    steps:
+      - name: Oeffentliche Gate-Tools auschecken
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2, immutable
+        with:
+          path: gate
+          persist-credentials: false
+
+      - name: Commit-Pin und Version pruefen
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$SOURCE_SHA" | grep -Eq '^[0-9a-f]{40}$'
+          printf '%s' "$EXPECTED_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+          node -e 'const k=require("node:crypto").createPublicKey(Buffer.from(process.env.RECIPIENT_PUBLIC_KEY_BASE64,"base64").toString("utf8")); if(k.asymmetricKeyType!=="rsa"||k.asymmetricKeyDetails.modulusLength<3072){process.exit(1)}'
+          echo "PASS charge-source-pin (source-sha=$SOURCE_SHA version=$EXPECTED_VERSION)"
+
+      - name: Lesetoken fuer genau subunit-charge holen
+        id: charge-app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2, immutable
+        with:
+          app-id: ${{ vars.CHARGE_READ_APP_ID }}
+          private-key: ${{ secrets.CHARGE_READ_APP_PRIVATE_KEY }}
+          owner: Subunit-UG
+          repositories: subunit-charge
+          permission-contents: read
+
+      - name: Subunit Charge exakt und read-only auschecken
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2, immutable
+        with:
+          repository: Subunit-UG/subunit-charge
+          ref: ${{ inputs.source_sha }}
+          token: ${{ steps.charge-app.outputs.token }}
+          path: private/subunit-charge
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Lesetoken vor jedem privaten Code widerrufen
+        if: always() && steps.charge-app.outputs.token != ''
+        env:
+          CHARGE_TOKEN: ${{ steps.charge-app.outputs.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          # Kopfzeile ueber stdin (printf ist eingebaut): der Token steht nie in einer Kommandozeile.
+          code=$(printf 'header = "Authorization: Bearer %s"\n' "$CHARGE_TOKEN" \
+            | curl -sS -o /dev/null -w '%{http_code}' -K - -X DELETE \
+                -H 'Accept: application/vnd.github+json' https://api.github.com/installation/token)
+          [ "$code" = "204" ] || { echo "::error::Token-Widerruf fehlgeschlagen ($code)"; exit 1; }
+          code=$(printf 'header = "Authorization: Bearer %s"\n' "$CHARGE_TOKEN" \
+            | curl -sS -o /dev/null -w '%{http_code}' -K - https://api.github.com/installation/repositories)
+          [ "$code" = "401" ] || { echo "::error::Token nach Widerruf noch gueltig ($code)"; exit 1; }
+          echo "PASS charge-token-revoked"
+
+      - name: Quellstand pruefen
+        working-directory: private/subunit-charge
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$SOURCE_SHA" ] || { echo "::error::Ausgecheckter Stand passt nicht zum Pin"; exit 1; }
+          if git config --get-regexp '^http\..*extraheader' >/dev/null; then echo "::error::Zugangsdaten im Checkout"; exit 1; fi
+          [ "$(tr -d '[:space:]' < VERSION)" = "$EXPECTED_VERSION" ] || { echo "::error::VERSION passt nicht"; exit 1; }
+          echo "PASS charge-source (head=$SOURCE_SHA)"
+
+      - name: Signier-Identitaet in temporaeren Schluesselbund laden
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          if [ -z "${APPLE_CERTIFICATE:-}" ] || [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            echo "::error::APPLE_CERTIFICATE / APPLE_SIGNING_IDENTITY fehlen — kein ad-hoc Charge-Release."
+            exit 1
+          fi
+          case "$APPLE_SIGNING_IDENTITY" in
+            "Developer ID Application:"*|"Apple Development:"*) ;;
+            *) echo "::error::Unerwartete Signier-Identitaet."; exit 1 ;;
+          esac
+          p12="$RUNNER_TEMP/charge-sign.p12"
+          kc="$RUNNER_TEMP/charge-build.keychain-db"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$p12"
+          kc_pw="$(openssl rand -hex 24)"
+          security create-keychain -p "$kc_pw" "$kc"
+          security set-keychain-settings -lut 3600 "$kc"
+          security unlock-keychain -p "$kc_pw" "$kc"
+          security import "$p12" -k "$kc" -P "${APPLE_CERTIFICATE_PASSWORD:-}" -T /usr/bin/codesign > /dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kc_pw" "$kc" > /dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          rm -f "$p12"
+          security find-identity -v -p codesigning "$kc" | tail -1
+          echo "CHARGE_KEYCHAIN=$kc" >> "$GITHUB_ENV"
+
+      - name: Bundle bauen und signieren
+        working-directory: private/subunit-charge
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHARGE_SIGN_ID="$APPLE_SIGNING_IDENTITY" \
+            bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" charge-build ./build.sh release
+          test -d "dist/Subunit Charge.app"
+
+      - name: Signatur, Version, Team und Dienst pruefen
+        working-directory: private/subunit-charge
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="dist/Subunit Charge.app"
+          plist="$app/Contents/Info.plist"
+          daemon="$app/Contents/Library/LaunchDaemons/co.subunit.charge.helper.plist"
+          helper="$app/Contents/MacOS/SubunitChargeHelper"
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")
+          [ "$version" = "$EXPECTED_VERSION" ] || { echo "::error::Bundle-Version $version passt nicht zu $EXPECTED_VERSION."; exit 1; }
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = "co.subunit.charge" ] || { echo "::error::Bundle-ID"; exit 1; }
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :BundleProgram' "$daemon")" = "Contents/MacOS/SubunitChargeHelper" ] || { echo "::error::BundleProgram"; exit 1; }
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :MachServices:co.subunit.charge.helper' "$daemon")" = "true" ] || { echo "::error::MachServices"; exit 1; }
+          codesign --verify --strict --deep "$app"
+          codesign --verify --strict "$helper"
+          for target in "$app" "$helper"; do
+            team=$(codesign -dv "$target" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+            [ "$team" = "Y23NYAZM6M" ] || { echo "::error::Unerwartetes Team: $team"; exit 1; }
+            codesign -dv "$target" 2>&1 | grep -q 'flags=.*runtime' || { echo "::error::Hardened Runtime fehlt: $target"; exit 1; }
+          done
+          [ "$(codesign -dv "$helper" 2>&1 | sed -n 's/^Identifier=//p')" = "co.subunit.charge.helper" ] || { echo "::error::Dienst-Kennung"; exit 1; }
+          [ "$(codesign -dv "$app" 2>&1 | sed -n 's/^Identifier=//p')" = "co.subunit.charge" ] || { echo "::error::App-Kennung"; exit 1; }
+          echo "PASS charge-signature (version=$version team=Y23NYAZM6M)"
+
+      - name: Archiv verschluesseln
+        working-directory: private/subunit-charge
+        shell: bash
+        run: |
+          set -euo pipefail
+          plain="$RUNNER_TEMP/charge-plain"
+          out="$RUNNER_TEMP/charge-out"
+          mkdir -p "$plain" "$out"
+          archive="$plain/SubunitCharge-$EXPECTED_VERSION.zip"
+          ditto -c -k --keepParent "dist/Subunit Charge.app" "$archive"
+          node "$GITHUB_WORKSPACE/gate/scripts/encrypt-confidential-log.mjs" \
+            "$archive" "$out/SubunitCharge-$EXPECTED_VERSION.zip.envelope.json" "$RECIPIENT_PUBLIC_KEY_BASE64"
+          rm -rf "$plain"
+          printf '{"source_sha":"%s","version":"%s"}\n' "$SOURCE_SHA" "$EXPECTED_VERSION" > "$out/build-receipt.json"
+          echo "PASS charge-envelope (plaintext nur im Umschlag)"
+
+      - name: Artefakt hochladen
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: subunit-charge-${{ inputs.version }}
+          path: ${{ runner.temp }}/charge-out/
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Temporaeren Schluesselbund entfernen
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${CHARGE_KEYCHAIN:-}" ]; then security delete-keychain "$CHARGE_KEYCHAIN" || true; fi
+          rm -rf "$GITHUB_WORKSPACE/private" "$RUNNER_TEMP/charge-plain"
