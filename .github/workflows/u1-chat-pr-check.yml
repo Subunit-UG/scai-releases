@@ -48,6 +48,10 @@ jobs:
           set -euo pipefail
           printf '%s' "$SOURCE_SHA" | grep -Eq '^[0-9a-f]{40}$'
           echo "PASS u1-chat-source-pin (source-sha=$SOURCE_SHA)"
+      - name: Gepinntes Bun einrichten
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2, immutable
+        with:
+          bun-version: 1.4.4
       - name: Attachment-Decoder fuer Backendtests installieren
         shell: bash
         run: |
@@ -62,32 +66,12 @@ jobs:
         env:
           SOURCE_DEPLOY_KEY: ${{ secrets.U1_CHAT_SOURCE_DEPLOY_KEY }}
         run: bash gate/scripts/checkout-private-source.sh u1-chat git@github.com:subunit-ai/u1-chat.git "$SOURCE_SHA"
-      # Dieselbe Bun-Version wie die ausgelieferte Laufzeit (u1-chat scripts/install-bun-runtime.py, deploy.sh
-      # bricht bei Abweichung ab). 30.10.: CI pruefte mit 1.3.14, live lief 1.4.4; Bun.listen({fd}) des
-      # Kontor-Anmelde-Dienstes scheiterte nur in der CI. Version streng gepruefte Zahl, sonst Abbruch.
-      - name: Bun-Version aus der Quelle lesen
-        id: bunpin
+      # Laufzeit = Pin der ausgelieferten Quelle (u1-chat scripts/install-bun-runtime.py). setup-bun laeuft vor dem
+      # privaten Checkout (keine Action neben privatem Code); verify-bun-runtime-pin.sh macht jede Abweichung rot
+      # (30.10.: CI 1.3.14 gegen live 1.4.4).
+      - name: Bun-Pin der Quelle pruefen
         working-directory: private/u1-chat
-        shell: bash
-        run: |
-          set -euo pipefail
-          version=$(grep -E '^VERSION = "[0-9]+\.[0-9]+\.[0-9]+"$' scripts/install-bun-runtime.py | sed -E 's/^VERSION = "([0-9.]+)"$/\1/')
-          [ "$(printf '%s\n' "$version" | wc -l)" -eq 1 ]
-          printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "PASS u1-chat-bun-pin (bun=$version)"
-      - name: Gepinntes Bun einrichten
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2, immutable
-        with:
-          bun-version: ${{ steps.bunpin.outputs.version }}
-      - name: Bun-Version nachweisen
-        shell: bash
-        env:
-          BUN_ERWARTET: ${{ steps.bunpin.outputs.version }}
-        run: |
-          set -euo pipefail
-          [ "$(bun --version)" = "$BUN_ERWARTET" ]
-          echo "PASS u1-chat-bun-laufzeit (bun=$(bun --version))"
+        run: bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" u1-chat-bun-pin bash "$GITHUB_WORKSPACE/gate/scripts/verify-bun-runtime-pin.sh" scripts/install-bun-runtime.py
       - name: Backend- und Boundary-Suite
         id: backend_tests
         working-directory: private/u1-chat
