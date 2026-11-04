@@ -52,6 +52,7 @@ case "$component:$source_repo" in
   subunit-scai:git@github.com:Subunit-UG/scai-app.git) ;;
   echo:git@github.com:Subunit-UG/echo-server.git) ;;
   subunit-notch:git@github.com:Subunit-UG/mac-notch.git) ;;
+  notch-zentrale:git@github.com:Subunit-UG/notch-zentrale.git) ;;
   sonar-tauri:git@github.com:Subunit-UG/sonar-tauri.git) ;;
   bridge-tauri:git@github.com:Subunit-UG/bridge-tauri.git) ;;
   trace-tauri:git@github.com:Subunit-UG/trace-tauri.git) ;;

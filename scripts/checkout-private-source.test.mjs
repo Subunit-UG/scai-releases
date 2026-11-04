@@ -116,6 +116,8 @@ test("repository allowlist, immutable SHA and dedicated key fail closed", () => 
     [["u1-chat", "git@github.com:Subunit-UG/infra-u1-chat.git", SHA], 65, /deploy key is missing/],
     [["subunit-notch", "git@github.com:Subunit-UG/mac-notch.git", SHA], 65, /deploy key is missing/],
     [["subunit-notch", "git@github.com:Subunit-UG/echo-server.git", SHA], 64, /not allowlisted/],
+    [["notch-zentrale", "git@github.com:Subunit-UG/mac-notch.git", SHA], 64, /not allowlisted/],
+    [["subunit-notch", "git@github.com:Subunit-UG/notch-zentrale.git", SHA], 64, /not allowlisted/],
     [["subunit-scai", "git@github.com:Subunit-UG/scai-app.git", SHA], 65, /deploy key is missing/],
     [["subunit-scai", "git@github.com:Subunit-UG/infra-atlas.git", SHA], 64, /not allowlisted/],
   ]) {
@@ -132,6 +134,7 @@ test("repository allowlist, immutable SHA and dedicated key fail closed", () => 
 const CANONICAL_SOURCES = {
   "u1-chat": "Subunit-UG/infra-u1-chat", atlas: "Subunit-UG/infra-atlas", "subunit-auth": "Subunit-UG/infra-auth",
   "subunit-scai": "Subunit-UG/scai-app", echo: "Subunit-UG/echo-server", "subunit-notch": "Subunit-UG/mac-notch",
+  "notch-zentrale": "Subunit-UG/notch-zentrale",
   "sonar-tauri": "Subunit-UG/sonar-tauri", "bridge-tauri": "Subunit-UG/bridge-tauri", "trace-tauri": "Subunit-UG/trace-tauri",
 };
 for (const [component, repository] of Object.entries(CANONICAL_SOURCES)) test(`Org-Umzug: ${component} nur über ${repository}`, () => {
