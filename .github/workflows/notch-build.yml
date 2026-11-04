@@ -122,10 +122,16 @@ jobs:
           APPLE_CERTIFICATE: ${{ inputs.signing == 'developer-id' && secrets.APPLE_DEVID_CERTIFICATE || secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ inputs.signing == 'developer-id' && secrets.APPLE_DEVID_CERTIFICATE_PASSWORD || secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ inputs.signing == 'developer-id' && secrets.APPLE_DEVID_SIGNING_IDENTITY || secrets.APPLE_SIGNING_IDENTITY }}
+          # Ohne diese Pruefung fiele ein fehlendes Developer-ID-Secret still auf das Development-Secret zurueck.
+          DEVID_COMPLETE: ${{ secrets.APPLE_DEVID_CERTIFICATE != '' && secrets.APPLE_DEVID_CERTIFICATE_PASSWORD != '' && secrets.APPLE_DEVID_SIGNING_IDENTITY != '' }}
         shell: bash
         run: |
           set -euo pipefail
           set +x
+          if [ "$SIGNING" = developer-id ] && [ "$DEVID_COMPLETE" != true ]; then
+            echo "::error::Developer-ID-Secrets (APPLE_DEVID_*) fehlen oder sind unvollstaendig."
+            exit 1
+          fi
           if [ -z "${APPLE_CERTIFICATE:-}" ] || [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
             echo "::error::Signier-Zertifikat oder -Identitaet fehlen — kein ad-hoc Notch-Release."
             exit 1
@@ -219,6 +225,12 @@ jobs:
               printf '%s\n' "$info" | grep -Eq '^CodeDirectory .*flags=0x[0-9a-f]*\(.*runtime' || { echo "::error::Hardened Runtime fehlt: ${part#"$app"/}"; exit 1; }
               printf '%s\n' "$info" | grep -q '^Timestamp=' || { echo "::error::Sicherer Zeitstempel fehlt: ${part#"$app"/}"; exit 1; }
             done
+            zteam=$(codesign -dv "$nested" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+            zident=$(codesign -dv "$nested" 2>&1 | sed -n 's/^Identifier=//p')
+            if [ "$zteam" != "$EXPECTED_TEAM" ] || [ "$zident" != "co.subunit.notch.zentrale" ]; then
+              echo "::error::Eingebettete Zentrale: unerwartetes Team oder Identifier."
+              exit 1
+            fi
             ztv=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$nested/Contents/Info.plist")
             if [ "$ztv" != "$ZENTRALE_VERSION" ]; then
               echo "::error::Eingebettete Zentrale $ztv passt nicht zu $ZENTRALE_VERSION."
