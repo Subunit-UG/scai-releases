@@ -1,7 +1,7 @@
 # Subunit Notch — signierter Bau fuer das PRIVATE Quell-Repo.
 #
-# Die Notch ist eine native macOS-App (Swift). Ihre Signier-Identitaet liegt nur
-# hier als Secret (dieselbe Apple-Zertifikatskette wie SCAI). Dieser ausschliess-
+# Die Notch ist eine native macOS-App (Swift). Ihre Signier-Identitaeten liegen nur
+# hier als Secret. Dieser ausschliess-
 # lich manuell ausloesbare Public-Runner checkt genau einen vollstaendigen
 # Commit-SHA mit einem read-only Deploy-Key aus, baut und signiert das Bundle.
 # Weil dieses Repo oeffentlich ist, verlaesst das Bundle den Runner NUR als
@@ -10,6 +10,15 @@
 # Compiler- und Build-Ausgaben koennen Quelltext enthalten und bleiben in
 # fluechtigen Dateien (run-confidential.sh). Oeffentlich erscheinen nur Pin,
 # Team-ID, Bundle-Identifier und Pruefsummen — keine Zertifikatsnamen.
+#
+# Signierwege (TJ 2026-11-04: Notch signiert in den Store):
+#   developer-id  Developer ID Application des Firmenteams 8V35FVMFT9, Hardened
+#                 Runtime, sichere Zeitstempel, Notarisierung bei Apple und
+#                 angeheftetes Ticket. Die Notch-Zentrale (eigenes Repo) wird mit
+#                 derselben Identitaet gebaut und im Notch-Bundle mitgeliefert.
+#                 Nur dieser Weg ist fuer Downloads ausserhalb dieses Macs gedacht.
+#   development   Bisheriger Weg (Apple Development, altes Team Y23NYAZM6M),
+#                 nur fuer interne Installationen; ohne Notarisierung.
 
 name: Notch Signed Build (private source)
 
@@ -24,6 +33,24 @@ on:
         description: "Erwartete CFBundleShortVersionString (z. B. 0.6.0)"
         required: true
         type: string
+      signing:
+        description: "Signierweg: developer-id (notarisiert, Firmenteam) oder development (intern)"
+        required: true
+        type: choice
+        default: developer-id
+        options:
+          - developer-id
+          - development
+      zentrale_sha:
+        description: "Vollstaendiger notch-zentrale-Commit-SHA (Pflicht bei developer-id, sonst leer)"
+        required: false
+        type: string
+        default: ""
+      zentrale_version:
+        description: "Erwartete Version der Notch-Zentrale (Pflicht bei developer-id, sonst leer)"
+        required: false
+        type: string
+        default: ""
       recipient_public_key_base64:
         description: "Einmal-RSA-Public-Key (PEM, base64, >= 3072 Bit) fuer den verschluesselten Umschlag"
         required: true
@@ -40,10 +67,13 @@ jobs:
   build:
     name: Notch bauen und signieren
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       SOURCE_SHA: ${{ inputs.source_sha }}
       EXPECTED_VERSION: ${{ inputs.version }}
+      SIGNING: ${{ inputs.signing }}
+      ZENTRALE_SHA: ${{ inputs.zentrale_sha }}
+      ZENTRALE_VERSION: ${{ inputs.zentrale_version }}
       RECIPIENT_PUBLIC_KEY_BASE64: ${{ inputs.recipient_public_key_base64 }}
     steps:
       - name: Oeffentliche Gate-Tools auschecken
@@ -52,36 +82,64 @@ jobs:
           path: gate
           persist-credentials: false
 
-      - name: Commit-Pin und Version pruefen
+      - name: Commit-Pin, Version und Signierweg pruefen
         shell: bash
         run: |
           set -euo pipefail
           printf '%s' "$SOURCE_SHA" | grep -Eq '^[0-9a-f]{40}$'
           printf '%s' "$EXPECTED_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+          case "$SIGNING" in
+            developer-id)
+              # Der Store-Weg liefert die Zentrale immer mit: beide Pins sind Pflicht.
+              printf '%s' "$ZENTRALE_SHA" | grep -Eq '^[0-9a-f]{40}$'
+              printf '%s' "$ZENTRALE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+              team=8V35FVMFT9 ;;
+            development)
+              if [ -n "$ZENTRALE_SHA$ZENTRALE_VERSION" ]; then
+                echo "::error::Die Zentrale wird nur im developer-id-Weg mitgebaut."
+                exit 1
+              fi
+              team=Y23NYAZM6M ;;
+            *) echo "::error::Unbekannter Signierweg."; exit 1 ;;
+          esac
           node -e 'const k=require("node:crypto").createPublicKey(Buffer.from(process.env.RECIPIENT_PUBLIC_KEY_BASE64,"base64").toString("utf8")); if(k.asymmetricKeyType!=="rsa"||k.asymmetricKeyDetails.modulusLength<3072){process.exit(1)}'
-          echo "PASS notch-source-pin (source-sha=$SOURCE_SHA version=$EXPECTED_VERSION)"
+          echo "EXPECTED_TEAM=$team" >> "$GITHUB_ENV"
+          echo "PASS notch-source-pin (source-sha=$SOURCE_SHA version=$EXPECTED_VERSION signing=$SIGNING zentrale-sha=${ZENTRALE_SHA:-none})"
 
       - name: Notch exakt und read-only auschecken
         env:
           SOURCE_DEPLOY_KEY: ${{ secrets.NOTCH_SOURCE_DEPLOY_KEY }}
         run: bash gate/scripts/checkout-private-source.sh subunit-notch git@github.com:Subunit-UG/mac-notch.git "$SOURCE_SHA"
 
+      - name: Notch-Zentrale exakt und read-only auschecken
+        if: inputs.signing == 'developer-id'
+        env:
+          SOURCE_DEPLOY_KEY: ${{ secrets.ZENTRALE_SOURCE_DEPLOY_KEY }}
+        run: bash gate/scripts/checkout-private-source.sh notch-zentrale git@github.com:Subunit-UG/notch-zentrale.git "$ZENTRALE_SHA"
+
       - name: Signier-Identitaet in temporaeren Schluesselbund laden
         env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ inputs.signing == 'developer-id' && secrets.APPLE_DEVID_CERTIFICATE || secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ inputs.signing == 'developer-id' && secrets.APPLE_DEVID_CERTIFICATE_PASSWORD || secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ inputs.signing == 'developer-id' && secrets.APPLE_DEVID_SIGNING_IDENTITY || secrets.APPLE_SIGNING_IDENTITY }}
+          # Ohne diese Pruefung fiele ein fehlendes Developer-ID-Secret still auf das Development-Secret zurueck.
+          DEVID_COMPLETE: ${{ secrets.APPLE_DEVID_CERTIFICATE != '' && secrets.APPLE_DEVID_CERTIFICATE_PASSWORD != '' && secrets.APPLE_DEVID_SIGNING_IDENTITY != '' }}
         shell: bash
         run: |
           set -euo pipefail
           set +x
-          if [ -z "${APPLE_CERTIFICATE:-}" ] || [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
-            echo "::error::APPLE_CERTIFICATE / APPLE_SIGNING_IDENTITY fehlen — kein ad-hoc Notch-Release."
+          if [ "$SIGNING" = developer-id ] && [ "$DEVID_COMPLETE" != true ]; then
+            echo "::error::Developer-ID-Secrets (APPLE_DEVID_*) fehlen oder sind unvollstaendig."
             exit 1
           fi
-          case "$APPLE_SIGNING_IDENTITY" in
-            "Developer ID Application:"*|"Apple Development:"*) ;;
-            *) echo "::error::Unerwartete Signier-Identitaet."; exit 1 ;;
+          if [ -z "${APPLE_CERTIFICATE:-}" ] || [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            echo "::error::Signier-Zertifikat oder -Identitaet fehlen — kein ad-hoc Notch-Release."
+            exit 1
+          fi
+          # Der Weg legt die Zertifikatsart fest; eine vertauschte Identitaet bricht ab.
+          case "$SIGNING:$APPLE_SIGNING_IDENTITY" in
+            "developer-id:Developer ID Application:"*|"development:Apple Development:"*) ;;
+            *) echo "::error::Signier-Identitaet passt nicht zum Signierweg."; exit 1 ;;
           esac
           p12="$RUNNER_TEMP/notch-sign.p12"
           kc="$RUNNER_TEMP/notch-build.keychain-db"
@@ -97,10 +155,37 @@ jobs:
           security find-identity -v -p codesigning "$kc" | tail -1
           echo "NOTCH_KEYCHAIN=$kc" >> "$GITHUB_ENV"
 
+      - name: Notch-Zentrale bauen und signieren
+        if: inputs.signing == 'developer-id'
+        working-directory: private/notch-zentrale
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_DEVID_SIGNING_IDENTITY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZENTRALE_SIGN_ID="$APPLE_SIGNING_IDENTITY" ZENTRALE_BUILD_NUMBER="$(date -u +%Y%m%d%H%M)" \
+            bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" zentrale-build ./build.sh release
+          app=dist/NotchZentrale.app
+          test -d "$app"
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")
+          if [ "$version" != "$ZENTRALE_VERSION" ]; then
+            echo "::error::Zentrale-Version $version passt nicht zu $ZENTRALE_VERSION."
+            exit 1
+          fi
+          codesign --verify --strict "$app"
+          team=$(codesign -dv "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+          ident=$(codesign -dv "$app" 2>&1 | sed -n 's/^Identifier=//p')
+          if [ "$team" != "$EXPECTED_TEAM" ] || [ "$ident" != "co.subunit.notch.zentrale" ]; then
+            echo "::error::Zentrale: unerwartetes Team oder Identifier."
+            exit 1
+          fi
+          echo "NOTCH_EMBED_ZENTRALE=$PWD/$app" >> "$GITHUB_ENV"
+          echo "PASS zentrale-signature (version=$version team=$team)"
+
       - name: Bundle bauen und signieren
         working-directory: private/subunit-notch
         env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_SIGNING_IDENTITY: ${{ inputs.signing == 'developer-id' && secrets.APPLE_DEVID_SIGNING_IDENTITY || secrets.APPLE_SIGNING_IDENTITY }}
         shell: bash
         run: |
           set -euo pipefail
@@ -121,15 +206,90 @@ jobs:
           fi
           codesign --verify --strict --deep "$app"
           codesign --verify --strict "$app/Contents/Helpers/SubunitAgentBridge"
-          team=$(codesign -dv "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p')
-          if [ "$team" != "Y23NYAZM6M" ]; then
-            echo "::error::Unerwartetes Team: $team"
-            exit 1
+          for part in "$app" "$app/Contents/Helpers/SubunitAgentBridge"; do
+            team=$(codesign -dv "$part" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+            if [ "$team" != "$EXPECTED_TEAM" ]; then
+              echo "::error::Unerwartetes Team: $team"
+              exit 1
+            fi
+          done
+          if [ "$SIGNING" = developer-id ]; then
+            # Notarisierung verlangt Hardened Runtime und sichere Zeitstempel an jedem Teil.
+            nested=$(find "$app/Contents/Applications" -maxdepth 1 -name '*.app' -print -quit 2>/dev/null || true)
+            if [ -z "$nested" ]; then
+              echo "::error::Die Notch-Zentrale fehlt im Bundle."
+              exit 1
+            fi
+            for part in "$app" "$app/Contents/Helpers/SubunitAgentBridge" "$nested"; do
+              info=$(codesign -dvvv "$part" 2>&1)
+              printf '%s\n' "$info" | grep -Eq '^CodeDirectory .*flags=0x[0-9a-f]*\(.*runtime' || { echo "::error::Hardened Runtime fehlt: ${part#"$app"/}"; exit 1; }
+              printf '%s\n' "$info" | grep -q '^Timestamp=' || { echo "::error::Sicherer Zeitstempel fehlt: ${part#"$app"/}"; exit 1; }
+            done
+            zteam=$(codesign -dv "$nested" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+            zident=$(codesign -dv "$nested" 2>&1 | sed -n 's/^Identifier=//p')
+            if [ "$zteam" != "$EXPECTED_TEAM" ] || [ "$zident" != "co.subunit.notch.zentrale" ]; then
+              echo "::error::Eingebettete Zentrale: unerwartetes Team oder Identifier."
+              exit 1
+            fi
+            ztv=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$nested/Contents/Info.plist")
+            if [ "$ztv" != "$ZENTRALE_VERSION" ]; then
+              echo "::error::Eingebettete Zentrale $ztv passt nicht zu $ZENTRALE_VERSION."
+              exit 1
+            fi
           fi
           codesign -dv "$app" 2>&1 | grep -E '^(Identifier|TeamIdentifier)=' | head -2
-          echo "PASS notch-signature (version=$version team=$team)"
+          echo "PASS notch-signature (version=$version team=$EXPECTED_TEAM signing=$SIGNING)"
+
+      - name: Bei Apple notarisieren und Ticket anheften
+        if: inputs.signing == 'developer-id'
+        working-directory: private/subunit-notch
+        env:
+          APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          if [ -z "${APPLE_NOTARY_KEY:-}" ] || [ -z "${APPLE_NOTARY_KEY_ID:-}" ] || [ -z "${APPLE_NOTARY_ISSUER_ID:-}" ]; then
+            echo "::error::Notarisierungs-Schluessel fehlt — kein ungeprueftes Store-Bundle."
+            exit 1
+          fi
+          notary="$RUNNER_TEMP/notary"
+          mkdir -p "$notary"
+          key="$notary/AuthKey.p8"
+          printf '%s\n' "$APPLE_NOTARY_KEY" > "$key"
+          trap 'rm -f "$key"' EXIT
+          app=dist/SubunitNotch.app
+          submit="$notary/SubunitNotch-submit.zip"
+          ditto -c -k --keepParent "$app" "$submit"
+          xcrun notarytool submit "$submit" --key "$key" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER_ID" \
+            --wait --timeout 40m --output-format json > "$notary/submit.json" 2> "$notary/submit.err" || true
+          status=$(node -e 'try{const j=require(process.argv[1]);process.stdout.write(String(j.status||""))}catch{}' "$notary/submit.json")
+          sub_id=$(node -e 'try{const j=require(process.argv[1]);process.stdout.write(String(j.id||""))}catch{}' "$notary/submit.json")
+          # Das ausfuehrliche Apple-Protokoll nennt Dateipfade: es geht nur in den Umschlag.
+          if [ -n "$sub_id" ]; then
+            xcrun notarytool log "$sub_id" --key "$key" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER_ID" \
+              "$notary/notary-log.json" > /dev/null 2>&1 || true
+          fi
+          rm -f "$submit"
+          echo "NOTARY_SUBMISSION=$sub_id" >> "$GITHUB_ENV"
+          if [ "$status" != "Accepted" ]; then
+            echo "::error::Notarisierung nicht angenommen (Status: ${status:-unbekannt}). Protokoll liegt im Umschlag."
+            echo "NOTARY_FAILED=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          xcrun stapler staple "$app" > /dev/null
+          xcrun stapler validate "$app" > /dev/null
+          spctl --assess --type execute -vv "$app" 2>&1 | grep -q 'source=Notarized Developer ID' || {
+            echo "::error::Gatekeeper erkennt das Bundle nicht als notarisiert."
+            exit 1
+          }
+          echo "PASS notch-notarized (submission=$sub_id, Ticket angeheftet, Gatekeeper ok)"
 
       - name: Archiv verschluesseln
+        id: seal
         working-directory: private/subunit-notch
         shell: bash
         run: |
@@ -138,14 +298,23 @@ jobs:
           out="$RUNNER_TEMP/notch-out"
           mkdir -p "$plain" "$out"
           archive="$plain/SubunitNotch-$EXPECTED_VERSION.zip"
-          ditto -c -k --keepParent dist/SubunitNotch.app "$archive"
+          if [ "${NOTARY_FAILED:-0}" = 1 ]; then
+            # Abgelehnt: nur das Apple-Protokoll verlaesst den Runner, nie ein Bundle.
+            archive="$plain/notary-log-$EXPECTED_VERSION.zip"
+            ditto -c -k "$RUNNER_TEMP/notary" "$archive"
+          else
+            ditto -c -k --keepParent dist/SubunitNotch.app "$archive"
+          fi
           node "$GITHUB_WORKSPACE/gate/scripts/encrypt-confidential-log.mjs" \
-            "$archive" "$out/SubunitNotch-$EXPECTED_VERSION.zip.envelope.json" "$RECIPIENT_PUBLIC_KEY_BASE64"
+            "$archive" "$out/$(basename "$archive").envelope.json" "$RECIPIENT_PUBLIC_KEY_BASE64"
           rm -rf "$plain"
-          printf '{"source_sha":"%s","version":"%s"}\n' "$SOURCE_SHA" "$EXPECTED_VERSION" > "$out/build-receipt.json"
+          printf '{"source_sha":"%s","version":"%s","signing":"%s","zentrale_sha":"%s","zentrale_version":"%s","notary_submission":"%s"}\n' \
+            "$SOURCE_SHA" "$EXPECTED_VERSION" "$SIGNING" "$ZENTRALE_SHA" "$ZENTRALE_VERSION" "${NOTARY_SUBMISSION:-}" > "$out/build-receipt.json"
+          echo "sealed=1" >> "$GITHUB_OUTPUT"
           echo "PASS notch-envelope (plaintext nur im Umschlag)"
 
       - name: Artefakt hochladen
+        if: always() && steps.seal.outputs.sealed == '1'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
         with:
           name: subunit-notch-${{ inputs.version }}
@@ -153,9 +322,15 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+      - name: Notarisierung muss angenommen sein
+        if: env.NOTARY_FAILED == '1'
+        run: |
+          echo "::error::Apple hat das Bundle nicht notarisiert; Protokoll im Umschlag ansehen."
+          exit 1
+
       - name: Temporaeren Schluesselbund entfernen
         if: always()
         shell: bash
         run: |
           if [ -n "${NOTCH_KEYCHAIN:-}" ]; then security delete-keychain "$NOTCH_KEYCHAIN" || true; fi
-          rm -rf "$GITHUB_WORKSPACE/private" "$RUNNER_TEMP/notch-plain"
+          rm -rf "$GITHUB_WORKSPACE/private" "$RUNNER_TEMP/notch-plain" "$RUNNER_TEMP/notary"
