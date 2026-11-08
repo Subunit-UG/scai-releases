@@ -173,9 +173,7 @@ export async function requirePrCheck({ api, sourceSha, treeFor, prefetchTrees, n
           .filter((sha) => !trees.has(sha));
         if (shas.length) {
           if (typeof prefetchTrees !== "function") fail("Batched tree reader required");
-          for (let offset = 0; offset < shas.length; offset += PAGE_SIZE * MAX_PAGES) {
-            await prefetchTrees(shas.slice(offset, offset + PAGE_SIZE * MAX_PAGES), { budget });
-          }
+          await prefetchTrees(shas, { budget });
         }
         for (const observed of pending.values()) {
           const sha = sourceFromRun(observed, workflow.id);
@@ -292,7 +290,6 @@ export function privateTreeReader(env, { runCommand = command, clock = Date.now,
     if (!Array.isArray(shas) || shas.some((sha) => !SHA.test(sha))) fail("Invalid tree request");
     const missing = [...new Set(shas)].filter((sha) => !cache.has(sha));
     if (!missing.length) return;
-    if (missing.length > PAGE_SIZE * MAX_PAGES) fail("PR-check tree batch exceeds 1000 SHAs");
     if (fetches >= MAX_TREE_FETCHES) fail("PR-check tree fetch limit exceeded (maximum 16 batches); retry after Actions activity settles or contact release maintainers");
     if (!directory) {
       if (!env.SOURCE_DEPLOY_KEY) fail("Read-only source deploy key is required");
@@ -324,13 +321,17 @@ export function privateTreeReader(env, { runCommand = command, clock = Date.now,
     }
     const git = (args) => execute("git", ["-C", join(directory, "source.git"), ...args], budget);
     // Fetch commit/tree objects only; never check out or execute private code.
-    fetches++;
-    git(["fetch", "--quiet", "--no-tags", "--depth=1", "--filter=blob:none", "git@github.com:Subunit-UG/scai-app.git", ...missing]);
-    for (const sha of missing) {
-      if (git(["rev-parse", `${sha}^{commit}`]) !== sha) fail("Source commit drift");
-      const tree = git(["rev-parse", `${sha}^{tree}`]);
-      if (!SHA.test(tree)) fail("Invalid Git tree");
-      cache.set(sha, tree);
+    for (let offset = 0; offset < missing.length; offset += PAGE_SIZE * MAX_PAGES) {
+      if (fetches >= MAX_TREE_FETCHES) fail("PR-check tree fetch limit exceeded (maximum 16 batches); retry after Actions activity settles or contact release maintainers");
+      const batch = missing.slice(offset, offset + PAGE_SIZE * MAX_PAGES);
+      fetches++;
+      git(["fetch", "--quiet", "--no-tags", "--depth=1", "--filter=blob:none", "git@github.com:Subunit-UG/scai-app.git", ...batch]);
+      for (const sha of batch) {
+        if (git(["rev-parse", `${sha}^{commit}`]) !== sha) fail("Source commit drift");
+        const tree = git(["rev-parse", `${sha}^{tree}`]);
+        if (!SHA.test(tree)) fail("Invalid Git tree");
+        cache.set(sha, tree);
+      }
     }
   };
   return {

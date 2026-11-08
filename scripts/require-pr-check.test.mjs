@@ -890,6 +890,37 @@ test("final pending prefetch splits 1001 foreign SHAs into deduplicated bounded 
   }
 });
 
+test("final completed prefetch splits foreign SHAs at the 1000 boundary", async (t) => {
+  for (const count of [1000, 1001]) {
+    const h = harness(); h.run.created_at = "2026-11-08T11:59:00Z";
+    const completed = Array.from({ length: count }, (_, index) => {
+      const sha = (index + 1).toString(16).padStart(40, "0");
+      h.trees[sha] = "a".repeat(40);
+      return { ...h.run, id: h.run.id + index + 1,
+        created_at: index < 500 ? "2026-11-08T11:59:01Z" : "2026-11-08T11:59:40Z",
+        display_title: h.run.display_title.replace(GREEN, sha) };
+    });
+    const transport = simulatedTreeReader(h.trees);
+    let added = false;
+    try {
+      const proof = await requirePrCheck({ sourceSha: GREEN, now: NOW,
+        api: async (path) => {
+          if (!added && path.includes("/jobs?")) { added = true; h.runs.push(...completed); }
+          return h.api(path);
+        }, treeFor: (sha, options) => transport.reader.treeFor(sha, options),
+        prefetchTrees: (shas, options) => transport.reader.prefetch(shas, options) });
+      assert.equal(proof.runId, h.run.id);
+      assert.deepEqual(transport.fetches.map((batch) => batch.length), count === 1000 ? [1, 1000] : [1, 1000, 1]);
+      t.diagnostic(`completed=${count} fetch-sizes=${JSON.stringify(transport.fetches.map((batch) => batch.length))} api-calls=${h.calls.length}`);
+      const fetched = transport.fetches.slice(1).flat();
+      assert.equal(new Set(fetched).size, count);
+      assert.equal(fetched.length, count);
+      assert.ok(!h.calls.some((path) => completed.some((item) => path.endsWith(`/runs/${item.id}`))),
+        "foreign completed trees cannot replace the valid evidence");
+    } finally { transport.close(); }
+  }
+});
+
 test("tree transport obeys the remaining total budget after nine slow API calls", async () => {
   const h = harness();
   h.run.created_at = new Date(NOW.getTime() - 7 * 86400000 - 60000).toISOString();
@@ -945,11 +976,15 @@ test("tree reader enforces its time and batch-size budgets without network acces
   const dir = mkdtempSync(join(tmpdir(), "pr-tree-limits-"));
   const env = { RUNNER_TEMP: dir, SOURCE_DEPLOY_KEY: "fixture-key" };
   try {
-    const oversized = privateTreeReader(env);
+    const shas = Array.from({ length: 16001 }, (_, i) => i.toString(16).padStart(40, "0"));
+    const transport = simulatedTreeReader(Object.fromEntries(shas.map((sha) => [sha, "a".repeat(40)])));
     try {
-      assert.throws(() => oversized.prefetch(Array.from({ length: 1001 }, (_, i) => i.toString(16).padStart(40, "0"))), /batch exceeds 1000/);
-      assert.throws(() => oversized.prefetch(["--help"]), /Invalid tree request/);
-    } finally { oversized.close(); }
+      assert.throws(() => transport.reader.prefetch(shas), /maximum 16 batches/);
+      assert.deepEqual(transport.fetches.map((batch) => batch.length), Array(16).fill(1000));
+      assert.equal(transport.reader.treeFor(shas[15999]), "a".repeat(40), "completed batches stay cached");
+      assert.throws(() => transport.reader.treeFor(shas[16000]), /maximum 16 batches/);
+      assert.throws(() => transport.reader.prefetch(["--help"]), /Invalid tree request/);
+    } finally { transport.close(); }
     let elapsed = 0;
     const timeouts = [];
     const timed = privateTreeReader(env, { clock: () => elapsed, runCommand: (program, args, options) => {
