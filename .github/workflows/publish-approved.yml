@@ -31,8 +31,12 @@ concurrency:
 
 jobs:
   publish:
+    environment: release
     name: Fleet-PASS prüfen und Draft veröffentlichen
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      actions: read
     steps:
       - name: Gemergten Release-Vertrag auschecken
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2, immutable
@@ -82,6 +86,16 @@ jobs:
           SOURCE_SHA=$(jq -r .pins.scai_source.sha "$MANIFEST")
           echo "manifest=$MANIFEST" >> "$GITHUB_OUTPUT"
           echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Require successful tree-equivalent PR check
+        id: pr_check
+        timeout-minutes: 10
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.gate.outputs.source_sha }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          PR_CHECK_TEMP: ${{ runner.temp }}/required-pr-check
+        run: node scripts/require-pr-check.mjs
 
       - name: Draft, Bindung und sämtliche Asset-Digests verifizieren
         env:
@@ -144,3 +158,8 @@ jobs:
           gh release edit "$TAG" -R "$REPO" "${FLAGS[@]}"
           gh release view "$TAG" -R "$REPO" --json isDraft,isPrerelease,assets \
             --jq '{draft:.isDraft, prerelease:.isPrerelease, assets:(.assets|length)}'
+
+      - name: Remove PR-check temporary credentials
+        if: always()
+        shell: bash
+        run: rm -rf -- "$RUNNER_TEMP/required-pr-check"

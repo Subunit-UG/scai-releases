@@ -22,6 +22,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   preflight:
+    environment: release
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -82,6 +83,7 @@ jobs:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: bash gate/scripts/run-confidential.sh sonar-preflight node gate/scripts/sonar-release.mjs check-remote
   build:
+    environment: release
     needs: preflight
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
@@ -238,6 +240,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
   publish:
+    environment: release
     needs: [preflight, build]
     runs-on: ubuntu-latest
     timeout-minutes: 20

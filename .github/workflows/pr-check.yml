@@ -1468,6 +1468,7 @@ jobs:
           git config --global --unset-all url.git@github-trace:Subunit-UG/trace-tauri.git.insteadOf || true
 
   trace-standalone:
+    environment: release
     needs: preflight
     name: Trace Standalone prüfen (${{ matrix.label }})
     if: inputs.trace_ref != '' && needs.preflight.result == 'success'

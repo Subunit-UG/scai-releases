@@ -1,0 +1,19 @@
+{
+  "id": 41977805327,
+  "workflow_id": 311734799,
+  "path": ".github/workflows/pr-check.yml",
+  "head_sha": "e4dcd5b30ef2b21dcffdc4c1363509f51929c528",
+  "event": "workflow_dispatch",
+  "head_branch": "main",
+  "status": "completed",
+  "conclusion": "success",
+  "run_attempt": 1,
+  "display_title": "SCAI PR · d35c559238029a8b85dc94c2823919274d3ec518 · 4d6d8b21-6364-4861-a9f5-2395adb15185",
+  "created_at": "2026-11-05T06:02:47Z",
+  "repository": {
+    "full_name": "Subunit-UG/scai-releases"
+  },
+  "head_repository": {
+    "full_name": "Subunit-UG/scai-releases"
+  }
+}

@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { validatePrCheckGuard, validateReleaseEnvironments } from "./require-pr-check-workflow.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -23,6 +24,8 @@ export const EXPECTED_RELEASE_CONTRACT_PATHS = [
   "scripts/encrypt-confidential-log.mjs",
   "scripts/merge-cyclonedx.mjs",
   "scripts/release-authorization.mjs",
+  "scripts/require-pr-check-workflow.mjs",
+  "scripts/require-pr-check.mjs",
   "scripts/run-confidential.sh",
   "scripts/run-indexed-confidential.sh",
   "scripts/run-package-smoke.ps1",
@@ -43,7 +46,7 @@ export const EXPECTED_RELEASE_CONTRACT_PATHS = [
 ];
 
 export function validateReleaseWorkflow(workflow) {
-  const errors = [];
+  const errors = [...validatePrCheckGuard(workflow, "release"), ...validatePrCheckGuard(workflow, "manifest"), ...validateReleaseEnvironments(workflow)];
   const require = (condition, message) => { if (!condition) errors.push(message); };
   const has = (pattern) => pattern.test(workflow);
 
@@ -191,7 +194,7 @@ export function validateReleaseWorkflow(workflow) {
 }
 
 export function validatePublishWorkflow(workflow, contractPaths) {
-  const errors = [];
+  const errors = [...validatePrCheckGuard(workflow, "publish"), ...validateReleaseEnvironments(workflow)];
   const require = (condition, message) => { if (!condition) errors.push(message); };
   const has = (pattern) => pattern.test(workflow);
 
