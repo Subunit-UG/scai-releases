@@ -430,6 +430,38 @@ test("pending refresh adopts a green run once and verifies its own jobs and atte
   }
 });
 
+test("pending refresh merges red rereads before selecting the newest completed run", async () => {
+  for (const tied of [false, true]) {
+    for (const withNewerGreen of [true, false]) {
+      const h = harness();
+      h.run.created_at = "2026-11-08T11:59:00Z";
+      const pending = { ...h.run, id: h.run.id + 1, status: "pending", conclusion: null,
+        created_at: tied ? h.run.created_at : "2026-11-08T11:59:20Z" };
+      const newest = { ...h.run, id: h.run.id + 2, run_attempt: 3,
+        created_at: tied ? h.run.created_at : "2026-11-08T11:59:40Z" };
+      let added = false;
+      const result = h.verify(GREEN, async (path) => {
+        if (!added && path.includes("/jobs?")) {
+          added = true; h.runs.push(pending);
+          if (withNewerGreen) h.runs.push(newest);
+        }
+        if (path.endsWith(`/runs/${pending.id}`)) {
+          return { ...pending, status: "completed", conclusion: "failure" };
+        }
+        if (path.endsWith(`/runs/${newest.id}`)) h.select(newest);
+        return structuredClone(await h.api(path));
+      });
+      if (!withNewerGreen) await assert.rejects(result, /Latest tree-equivalent PR check is unsuccessful/);
+      else {
+        const proof = await result;
+        assert.equal(proof.runId, newest.id); assert.equal(proof.attempt, 3);
+        assert.ok(h.calls.some((path) => path.includes(`/runs/${newest.id}/attempts/3/jobs?`)));
+        assert.equal(h.calls.filter((path) => path.includes("/runs?")).length, 2, "one final enumeration");
+      }
+    }
+  }
+});
+
 test("pending refresh validates every direct run identity", async () => {
   for (const [field, value] of [
     ["id", 1], ["workflow_id", 1], ["path", ".github/workflows/build-all.yml"], ["head_branch", "feature"],
@@ -825,6 +857,74 @@ test("real tree reader finds squash-equivalent evidence in the second historical
     assert.equal(h.calls.filter((path) => path.includes("/runs?")).length, 3);
     assert.ok(transport.timeouts.every((timeout) => timeout <= 60000));
   } finally { transport.close(); }
+});
+
+test("final pending prefetch splits 1001 foreign SHAs into deduplicated bounded batches", async () => {
+  for (const duplicate of [false, true]) {
+    const h = harness(); h.run.created_at = "2026-11-08T11:59:00Z";
+    const pending = Array.from({ length: 1001 }, (_, index) => {
+      const sha = (index + 1).toString(16).padStart(40, "0");
+      h.trees[sha] = "a".repeat(40);
+      return { ...h.run, id: h.run.id + index + 1, status: "pending", conclusion: null,
+        created_at: index < 500 ? "2026-11-08T11:59:01Z" : "2026-11-08T11:59:40Z",
+        display_title: h.run.display_title.replace(GREEN, sha) };
+    });
+    if (duplicate) pending.push({ ...pending[0], id: h.run.id + 1002 });
+    const transport = simulatedTreeReader(h.trees);
+    let added = false;
+    try {
+      const proof = await requirePrCheck({ sourceSha: GREEN, now: NOW,
+        api: async (path) => {
+          if (!added && path.includes("/jobs?")) { added = true; h.runs.push(...pending); }
+          return h.api(path);
+        }, treeFor: (sha, options) => transport.reader.treeFor(sha, options),
+        prefetchTrees: (shas, options) => transport.reader.prefetch(shas, options) });
+      assert.equal(proof.runId, h.run.id);
+      assert.deepEqual(transport.fetches.map((batch) => batch.length), [1, 1000, 1]);
+      const fetched = transport.fetches.slice(1).flat();
+      assert.equal(new Set(fetched).size, 1001);
+      assert.equal(fetched.length, 1001);
+      assert.ok(!h.calls.some((path) => pending.some((item) => path.endsWith(`/runs/${item.id}`))),
+        "foreign trees need no individual run reread");
+    } finally { transport.close(); }
+  }
+});
+
+test("tree transport obeys the remaining total budget after nine slow API calls", async () => {
+  const h = harness();
+  h.run.created_at = new Date(NOW.getTime() - 7 * 86400000 - 60000).toISOString();
+  const dir = mkdtempSync(join(tmpdir(), "pr-tree-total-budget-"));
+  let elapsed = 0, apiCalls = 0;
+  const timeouts = [];
+  const reader = privateTreeReader({ RUNNER_TEMP: dir, SOURCE_DEPLOY_KEY: "fixture-key" }, {
+    clock: () => elapsed,
+    runCommand: (program, args, { timeout }) => {
+      timeouts.push(timeout);
+      if (args.includes("fetch")) {
+        elapsed += Math.min(59000, timeout);
+        if (timeout < 59000) throw new Error("PR-check verification transport timed out");
+        return "";
+      }
+      elapsed += 100;
+      if (program === "ssh-keyscan") return "github.com ssh-ed25519 fixture";
+      if (program === "ssh-keygen") return "256 SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU github.com";
+      const object = args.at(-1);
+      if (object.endsWith("^{commit}")) return object.slice(0, -9);
+      if (object.endsWith("^{tree}")) return h.trees[object.slice(0, -7)];
+      return "";
+    },
+  });
+  try {
+    await assert.rejects(requirePrCheck({ sourceSha: GREEN, now: NOW, clock: () => elapsed,
+      api: async (path, { timeout }) => {
+        assert.ok(timeout >= 22000); apiCalls++; elapsed += 22000; return h.api(path);
+      }, treeFor: (sha, options) => reader.treeFor(sha, options),
+      prefetchTrees: (shas, options) => reader.prefetch(shas, options),
+    }), /transport timed out|240-second resource budget/);
+    assert.equal(apiCalls, 9);
+    assert.ok(elapsed <= 240000, `total elapsed: ${elapsed}`);
+    assert.deepEqual(timeouts, [42000, 41900, 41800, 41700]);
+  } finally { reader.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("tree reader allows sixteen deduplicated batches and rejects a seventeenth with recovery text", () => {

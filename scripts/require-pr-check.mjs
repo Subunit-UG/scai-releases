@@ -173,11 +173,13 @@ export async function requirePrCheck({ api, sourceSha, treeFor, prefetchTrees, n
           .filter((sha) => !trees.has(sha));
         if (shas.length) {
           if (typeof prefetchTrees !== "function") fail("Batched tree reader required");
-          await prefetchTrees(shas);
+          for (let offset = 0; offset < shas.length; offset += PAGE_SIZE * MAX_PAGES) {
+            await prefetchTrees(shas.slice(offset, offset + PAGE_SIZE * MAX_PAGES), { budget });
+          }
         }
         for (const observed of pending.values()) {
           const sha = sourceFromRun(observed, workflow.id);
-          const tree = trees.has(sha) ? trees.get(sha) : await treeFor(sha);
+          const tree = trees.has(sha) ? trees.get(sha) : await treeFor(sha, { budget });
           if (!SHA.test(tree ?? "")) fail("Invalid checked tree");
           trees.set(sha, tree);
           if (tree !== sourceTree) continue;
@@ -185,12 +187,9 @@ export async function requirePrCheck({ api, sourceSha, treeFor, prefetchTrees, n
           if (sourceFromRun(refreshed, workflow.id) !== sha || refreshed.id !== observed.id
               || refreshed.run_attempt !== observed.run_attempt || refreshed.head_sha !== observed.head_sha
               || refreshed.created_at !== observed.created_at) fail("PR-check pending run changed during verification");
-          if (refreshed.status === "completed") {
-            if (!success(refreshed)) fail("Latest tree-equivalent PR check is unsuccessful");
-            const index = runs.findIndex((item) => item.id === refreshed.id);
-            if (index >= 0) runs[index] = refreshed;
-            else runs.push(refreshed);
-          }
+          const index = runs.findIndex((item) => item.id === refreshed.id);
+          if (index >= 0) runs[index] = refreshed;
+          else runs.push(refreshed);
         }
       }
       // Only completed outcomes participate. A pending run is not evidence; a
@@ -202,7 +201,7 @@ export async function requirePrCheck({ api, sourceSha, treeFor, prefetchTrees, n
       if (candidates.length === 0) continue;
       completed = true;
       if (!sourceTree) {
-        sourceTree = await treeFor(sourceSha);
+        sourceTree = await treeFor(sourceSha, { budget });
         if (!SHA.test(sourceTree ?? "")) fail("Invalid source tree");
         trees.set(sourceSha, sourceTree);
       }
@@ -214,11 +213,11 @@ export async function requirePrCheck({ api, sourceSha, treeFor, prefetchTrees, n
         .filter((sha) => !trees.has(sha));
       if (otherShas.length) {
         if (typeof prefetchTrees !== "function") fail("Batched tree reader required");
-        await prefetchTrees(otherShas);
+        await prefetchTrees(otherShas, { budget });
       }
       for (const run of relevant) {
         const checkedSha = sourceFromRun(run, workflow.id);
-        const checkedTree = trees.has(checkedSha) ? trees.get(checkedSha) : await treeFor(checkedSha);
+        const checkedTree = trees.has(checkedSha) ? trees.get(checkedSha) : await treeFor(checkedSha, { budget });
         if (!SHA.test(checkedTree ?? "")) fail("Invalid checked tree");
         trees.set(checkedSha, checkedTree);
         if (checkedTree === sourceTree) {
@@ -280,15 +279,16 @@ export function privateTreeReader(env, { runCommand = command, clock = Date.now,
     for (const [signal, handler] of handlers) signals.removeListener(signal, handler);
     handlers.clear();
   };
-  const execute = (program, args) => {
+  const execute = (program, args, budget) => {
     deadline ??= clock() + TREE_BUDGET_MS;
     const remaining = deadline - clock();
     if (remaining <= 0) fail("PR-check tree verification exceeded the 120-second budget");
-    const result = runCommand(program, args, { env: childEnv, timeout: Math.min(60000, remaining) });
+    const result = runCommand(program, args, { env: childEnv, timeout: Math.min(60000, remaining, budget()) });
+    budget();
     if (clock() >= deadline) fail("PR-check tree verification exceeded the 120-second budget");
     return result;
   };
-  const prefetch = (shas) => {
+  const prefetch = (shas, { budget = () => Infinity } = {}) => {
     if (!Array.isArray(shas) || shas.some((sha) => !SHA.test(sha))) fail("Invalid tree request");
     const missing = [...new Set(shas)].filter((sha) => !cache.has(sha));
     if (!missing.length) return;
@@ -311,18 +311,18 @@ export function privateTreeReader(env, { runCommand = command, clock = Date.now,
       delete childEnv.SOURCE_DEPLOY_KEY;
       delete childEnv.GH_TOKEN;
       delete childEnv.GITHUB_TOKEN;
-      const hostKey = execute("ssh-keyscan", ["-t", "ed25519", "github.com"])
+      const hostKey = execute("ssh-keyscan", ["-t", "ed25519", "github.com"], budget)
         .split("\n").filter((line) => line && !line.startsWith("#"));
       if (hostKey.length !== 1) fail("Invalid GitHub host key");
       writeFileSync(hosts, `${hostKey[0]}\n`, { mode: 0o600 });
-      const fingerprint = execute("ssh-keygen", ["-lf", hosts, "-E", "sha256"]).split(/\s+/)[1];
+      const fingerprint = execute("ssh-keygen", ["-lf", hosts, "-E", "sha256"], budget).split(/\s+/)[1];
       if (fingerprint !== "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU") fail("GitHub host key pin mismatch");
       const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
       childEnv.GIT_SSH_COMMAND = `ssh -i ${quote(key)} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ${quote(`UserKnownHostsFile=${hosts}`)}`;
       childEnv.GIT_TERMINAL_PROMPT = "0";
-      execute("git", ["init", "--bare", join(directory, "source.git")]);
+      execute("git", ["init", "--bare", join(directory, "source.git")], budget);
     }
-    const git = (args) => execute("git", ["-C", join(directory, "source.git"), ...args]);
+    const git = (args) => execute("git", ["-C", join(directory, "source.git"), ...args], budget);
     // Fetch commit/tree objects only; never check out or execute private code.
     fetches++;
     git(["fetch", "--quiet", "--no-tags", "--depth=1", "--filter=blob:none", "git@github.com:Subunit-UG/scai-app.git", ...missing]);
@@ -335,8 +335,8 @@ export function privateTreeReader(env, { runCommand = command, clock = Date.now,
   };
   return {
     prefetch,
-    treeFor(sha) {
-      prefetch([sha]);
+    treeFor(sha, options) {
+      prefetch([sha], options);
       return cache.get(sha);
     },
     close,
@@ -355,7 +355,7 @@ export async function main(env = process.env) {
   const reader = privateTreeReader(env);
   try {
     const proof = await requirePrCheck({ api, sourceSha: env.SOURCE_SHA,
-      treeFor: (sha) => reader.treeFor(sha), prefetchTrees: (shas) => reader.prefetch(shas) });
+      treeFor: (sha, options) => reader.treeFor(sha, options), prefetchTrees: (shas, options) => reader.prefetch(shas, options) });
     if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `pr_check_run_id=${proof.runId}\npr_check_tree=${proof.tree}\n`);
     console.log(`PASS required-pr-check run=${proof.runId} attempt=${proof.attempt} source=${proof.sourceSha} checked=${proof.checkedSha} tree=${proof.tree}`);
     return proof;
