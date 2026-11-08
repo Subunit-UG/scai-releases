@@ -16,7 +16,7 @@ const MAX_PAGES = 10;
 const VERIFICATION_BUDGET_MS = 240000;
 // Expired evidence requires a fresh PR check, never an unbounded API scan.
 export const LOOKBACK_DAYS = 30;
-const MAX_TREE_FETCHES = 2;
+const MAX_TREE_FETCHES = 16;
 const TREE_BUDGET_MS = 120000;
 export const REQUIRED_JOBS = [
   "Exakten Source-Prüfauftrag ohne private Schlüssel validieren",
@@ -148,10 +148,51 @@ export async function requirePrCheck({ api, sourceSha, treeFor, prefetchTrees, n
   const trees = new Map();
   let sourceTree;
   const currentTime = () => now.getTime() + (clock() - started);
-  const select = async (lower, through, singleWindow = false) => {
+  const select = async (lower, through, singleWindow = false, selected) => {
     budget();
     let completed = false;
-    for await (const runs of runWindows(request, workflow.id, lower, through, singleWindow)) {
+    const pending = new Map();
+    const scan = async (path) => {
+      const data = await request(path);
+      for (const candidate of Array.isArray(data?.workflow_runs) ? data.workflow_runs : []) {
+        if (selected && sourceFromRun(candidate, workflow.id)
+            && ["queued", "in_progress", "waiting", "pending"].includes(candidate.status)
+            && Date.parse(candidate.created_at) >= lower && Date.parse(candidate.created_at) <= through
+            && (Date.parse(candidate.created_at) > Date.parse(selected.created_at)
+              || (candidate.created_at === selected.created_at && candidate.id > selected.id))) {
+          if (!pending.has(candidate.id)) pending.set(candidate.id, structuredClone(candidate));
+        }
+      }
+      return data;
+    };
+    for await (const runs of runWindows(selected ? scan : request, workflow.id, lower, through, singleWindow)) {
+      // The final range is fully enumerated before any observed pending run is
+      // re-read. Earlier pages (including saturated parent windows) may be stale.
+      if (selected) {
+        const shas = [...new Set([...pending.values()].map((item) => sourceFromRun(item, workflow.id)))]
+          .filter((sha) => !trees.has(sha));
+        if (shas.length) {
+          if (typeof prefetchTrees !== "function") fail("Batched tree reader required");
+          await prefetchTrees(shas);
+        }
+        for (const observed of pending.values()) {
+          const sha = sourceFromRun(observed, workflow.id);
+          const tree = trees.has(sha) ? trees.get(sha) : await treeFor(sha);
+          if (!SHA.test(tree ?? "")) fail("Invalid checked tree");
+          trees.set(sha, tree);
+          if (tree !== sourceTree) continue;
+          const refreshed = await request(`repos/${REPO}/actions/runs/${observed.id}`);
+          if (sourceFromRun(refreshed, workflow.id) !== sha || refreshed.id !== observed.id
+              || refreshed.run_attempt !== observed.run_attempt || refreshed.head_sha !== observed.head_sha
+              || refreshed.created_at !== observed.created_at) fail("PR-check pending run changed during verification");
+          if (refreshed.status === "completed") {
+            if (!success(refreshed)) fail("Latest tree-equivalent PR check is unsuccessful");
+            const index = runs.findIndex((item) => item.id === refreshed.id);
+            if (index >= 0) runs[index] = refreshed;
+            else runs.push(refreshed);
+          }
+        }
+      }
       // Only completed outcomes participate. A pending run is not evidence; a
       // retry of the selected run is still rejected by the snapshot checks below.
       const candidates = runs.filter((run) => sourceFromRun(run, workflow.id) && run.status === "completed"
@@ -198,7 +239,7 @@ export async function requirePrCheck({ api, sourceSha, treeFor, prefetchTrees, n
   requireJobs(jobs, fresh);
   // One fresh, fully paginated range is the last enumeration. The moving
   // upper bound includes runs created while the historical search was active.
-  const latest = await select(Date.parse(run.created_at), currentTime(), true);
+  const latest = await select(Date.parse(run.created_at), currentTime(), true, run);
   if (!success(latest.run)) fail("Latest tree-equivalent PR check is unsuccessful");
   if (latest.run.id === run.id && (latest.checkedSha !== checkedSha
       || latest.run.run_attempt !== run.run_attempt || latest.run.head_sha !== run.head_sha
@@ -252,7 +293,7 @@ export function privateTreeReader(env, { runCommand = command, clock = Date.now,
     const missing = [...new Set(shas)].filter((sha) => !cache.has(sha));
     if (!missing.length) return;
     if (missing.length > PAGE_SIZE * MAX_PAGES) fail("PR-check tree batch exceeds 1000 SHAs");
-    if (fetches >= MAX_TREE_FETCHES) fail("PR-check tree fetch limit exceeded (maximum 2 batches)");
+    if (fetches >= MAX_TREE_FETCHES) fail("PR-check tree fetch limit exceeded (maximum 16 batches); retry after Actions activity settles or contact release maintainers");
     if (!directory) {
       if (!env.SOURCE_DEPLOY_KEY) fail("Read-only source deploy key is required");
       const base = env.PR_CHECK_TEMP || env.RUNNER_TEMP || tmpdir();

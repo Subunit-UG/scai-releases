@@ -54,6 +54,26 @@ function harness() {
   return state;
 }
 
+// Exercise the real reader/cache/budgets with only the transport simulated.
+function simulatedTreeReader(trees) {
+  const dir = mkdtempSync(join(tmpdir(), "pr-tree-transport-"));
+  const fetches = [];
+  const timeouts = [];
+  const reader = privateTreeReader({ RUNNER_TEMP: dir, SOURCE_DEPLOY_KEY: "fixture-key" }, {
+    runCommand: (program, args, options) => {
+      timeouts.push(options.timeout);
+      if (program === "ssh-keyscan") return "github.com ssh-ed25519 fixture";
+      if (program === "ssh-keygen") return "256 SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU github.com";
+      if (args.includes("fetch")) fetches.push(args.slice(args.indexOf("git@github.com:Subunit-UG/scai-app.git") + 1));
+      const object = args.at(-1);
+      if (object.endsWith("^{commit}")) return object.slice(0, -9);
+      if (object.endsWith("^{tree}")) return trees[object.slice(0, -7)];
+      return "";
+    },
+  });
+  return { reader, fetches, timeouts, close() { reader.close(); rmSync(dir, { recursive: true, force: true }); } };
+}
+
 test("recorded successful PR check approves d35c5592 and its mandatory jobs", async () => {
   const h = harness();
   const proof = await h.verify();
@@ -247,7 +267,7 @@ test("newer cancelled or skipped outcomes invalidate older green evidence", asyn
 });
 
 test("pending runs are ignored while the latest completed evidence is checked", async () => {
-  for (const status of ["queued", "in_progress", "waiting"]) {
+  for (const status of ["queued", "in_progress", "waiting", "pending"]) {
     const h = harness();
     h.runs.push({ ...h.run, id: h.run.id + 1, status, conclusion: null });
     assert.equal((await h.verify()).runId, h.run.id);
@@ -355,6 +375,87 @@ test("final range is fully paginated and rejects a younger failure on page two",
     return h.api(path);
   }), /Latest tree-equivalent PR check is unsuccessful/);
   assert.ok(h.calls.some((path) => path.includes("/runs?") && path.endsWith("page=2")));
+});
+
+test("final range rereads a younger pending run that fails while page two is fetched", async () => {
+  for (const status of ["queued", "in_progress", "waiting", "pending"]) {
+    const h = harness();
+    h.run.created_at = "2026-11-08T11:59:00Z";
+    const younger = { ...h.run, id: h.run.id + 1, status, conclusion: null };
+    let added = false;
+    await assert.rejects(h.verify(GREEN, async (path) => {
+      if (!added && path.includes("/jobs?")) {
+        added = true;
+        h.runs.push(younger, ...Array.from({ length: 99 }, (_, index) => ({ ...h.run,
+          id: h.run.id + index + 2, display_title: "unrelated" })));
+      }
+      if (path.includes("/runs?") && path.endsWith("page=2")) {
+        younger.status = "completed"; younger.conclusion = "failure";
+      }
+      return h.api(path);
+    }), /Latest tree-equivalent PR check is unsuccessful/);
+    const pageTwo = h.calls.findIndex((path) => path.includes("/runs?") && path.endsWith("page=2"));
+    assert.ok(pageTwo >= 0);
+    assert.ok(h.calls.indexOf(`repos/Subunit-UG/scai-releases/actions/runs/${younger.id}`) > pageTwo);
+  }
+});
+
+test("pending refresh adopts a green run once and verifies its own jobs and attempt", async () => {
+  for (const broken of [null, "jobs", "attempt", "conclusion"]) {
+    const h = harness();
+    h.run.created_at = "2026-11-08T11:59:00Z";
+    const younger = { ...h.run, id: h.run.id + 1, run_attempt: 3, status: "pending", conclusion: null,
+      display_title: h.run.display_title.replace(GREEN, UNCHECKED) };
+    h.trees[UNCHECKED] = h.trees[GREEN];
+    let added = false, reads = 0;
+    const promise = h.verify(GREEN, async (path) => {
+      if (!added && path.includes("/jobs?")) { added = true; h.runs.push(younger); }
+      if (path.endsWith(`/runs/${younger.id}`)) {
+        reads++;
+        younger.status = "completed"; younger.conclusion = "success"; h.select(younger);
+        if (broken === "jobs") h.jobs[0].conclusion = "skipped";
+        if (reads === 3 && broken === "attempt") younger.run_attempt++;
+        if (reads === 3 && broken === "conclusion") younger.conclusion = "failure";
+      }
+      return structuredClone(await h.api(path));
+    });
+    if (broken) await assert.rejects(promise, broken === "jobs" ? /job is missing, skipped or unsuccessful/ : /run changed/);
+    else {
+      const proof = await promise;
+      assert.equal(proof.runId, younger.id); assert.equal(proof.attempt, 3); assert.equal(proof.checkedSha, UNCHECKED);
+      assert.ok(h.calls.some((path) => path.includes(`/runs/${younger.id}/attempts/3/jobs?`)));
+      assert.equal(h.calls.filter((path) => path.includes("/runs?")).length, 2, "no second enumeration or adoption");
+      assert.equal(reads, 3);
+    }
+  }
+});
+
+test("pending refresh validates every direct run identity", async () => {
+  for (const [field, value] of [
+    ["id", 1], ["workflow_id", 1], ["path", ".github/workflows/build-all.yml"], ["head_branch", "feature"],
+    ["repository", { full_name: "other/repo" }], ["head_repository", { full_name: "other/repo" }],
+    ["event", "push"], ["display_title", "invalid"], ["run_attempt", 2], ["head_sha", "a".repeat(40)],
+    ["display_title", fixture("41977805327-run").display_title.replace(GREEN, UNCHECKED)],
+    ["created_at", "2026-11-08T11:59:01Z"],
+  ]) {
+    const h = harness(); h.run.created_at = "2026-11-08T11:59:00Z";
+    const younger = { ...h.run, id: h.run.id + 1, status: "pending", conclusion: null };
+    h.runs.push(younger);
+    await assert.rejects(h.verify(GREEN, async (path) => path.endsWith(`/runs/${younger.id}`)
+      ? { ...younger, [field]: value } : h.api(path)), /pending run changed/);
+  }
+});
+
+test("pending refresh ignores different trees and rereads each matching identity separately", async () => {
+  const h = harness(); h.run.created_at = "2026-11-08T11:59:00Z";
+  const pending = [1, 2, 3].map((index) => ({ ...h.run, id: h.run.id + index,
+    status: "in_progress", conclusion: null,
+    display_title: h.run.display_title.replace(GREEN, index === 3 ? UNCHECKED : GREEN) }));
+  h.runs.push(...pending);
+  assert.equal((await h.verify()).runId, h.run.id);
+  for (const candidate of pending.slice(0, 2)) assert.equal(h.calls.filter((path) => path.endsWith(`/runs/${candidate.id}`)).length, 1);
+  assert.ok(!h.calls.some((path) => path.endsWith(`/runs/${pending[2].id}`)));
+  assert.deepEqual(h.batches, [[UNCHECKED]]);
 });
 
 test("replacement evidence must pass its own jobs and final attempt checks", async () => {
@@ -700,12 +801,44 @@ test("tree reader compares real Git trees without private checkout or credential
       const fetches = readFileSync(join(dir, "fetches.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
       assert.equal(fetches.length, 2, "one source fetch plus exactly one batch for N candidate SHAs");
       assert.deepEqual(fetches[1].slice(-3), [b, c, d]);
-      assert.throws(() => reader.treeFor("a".repeat(40)), /fetch limit exceeded/);
+      reader.prefetch([a, b, c, d, b]);
       assert.equal(readFileSync(join(dir, "fetches.jsonl"), "utf8").trim().split("\n").length, 2);
     }
     finally { reader.close(); }
     assert.ok(!readdirSync(dir).some((name) => name.startsWith("scai-pr-check-")));
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("real tree reader finds squash-equivalent evidence in the second historical window", async () => {
+  const h = harness();
+  h.run.created_at = "2026-11-07T11:59:00Z";
+  const source = "b".repeat(40);
+  h.trees[source] = h.trees[GREEN];
+  h.runs.unshift({ ...h.run, id: h.run.id + 1, created_at: "2026-11-08T11:59:00Z",
+    display_title: h.run.display_title.replace(GREEN, UNCHECKED) });
+  const transport = simulatedTreeReader(h.trees);
+  try {
+    const proof = await requirePrCheck({ api: h.api, sourceSha: source, now: NOW,
+      treeFor: (sha) => transport.reader.treeFor(sha), prefetchTrees: (shas) => transport.reader.prefetch(shas) });
+    assert.equal(proof.runId, h.run.id);
+    assert.deepEqual(transport.fetches, [[source], [UNCHECKED], [GREEN]]);
+    assert.equal(h.calls.filter((path) => path.includes("/runs?")).length, 3);
+    assert.ok(transport.timeouts.every((timeout) => timeout <= 60000));
+  } finally { transport.close(); }
+});
+
+test("tree reader allows sixteen deduplicated batches and rejects a seventeenth with recovery text", () => {
+  const shas = Array.from({ length: 17 }, (_, i) => (i + 1).toString(16).padStart(40, "0"));
+  const trees = Object.fromEntries(shas.map((sha) => [sha, "a".repeat(40)]));
+  const transport = simulatedTreeReader(trees);
+  try {
+    for (const sha of shas.slice(0, 16)) transport.reader.prefetch([sha, sha, shas[0]]);
+    assert.equal(transport.fetches.length, 16);
+    assert.ok(transport.fetches.every((batch) => batch.length === 1));
+    assert.throws(() => transport.reader.treeFor(shas[16]), /maximum 16 batches\); retry after Actions activity settles or contact release maintainers/);
+    assert.equal(transport.fetches.length, 16);
+    assert.equal(transport.reader.treeFor(shas[0]), trees[shas[0]], "cache remains valid across all batches");
+  } finally { transport.close(); }
 });
 
 test("tree reader enforces its time and batch-size budgets without network access", () => {
