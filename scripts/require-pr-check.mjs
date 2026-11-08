@@ -15,6 +15,8 @@ const PAGE_SIZE = 100;
 const MAX_PAGES = 10;
 // Expired evidence requires a fresh PR check, never an unbounded API scan.
 export const LOOKBACK_DAYS = 30;
+const MAX_TREE_FETCHES = 2;
+const TREE_BUDGET_MS = 120000;
 export const REQUIRED_JOBS = [
   "Exakten Source-Prüfauftrag ohne private Schlüssel validieren",
   "tsc + vite + cargo test",
@@ -85,7 +87,7 @@ export function requireJobs(jobs, run) {
   }
 }
 
-export async function requirePrCheck({ api, sourceSha, treeFor, now = new Date() }) {
+export async function requirePrCheck({ api, sourceSha, treeFor, prefetchTrees, now = new Date() }) {
   if (!SHA.test(sourceSha ?? "")) fail("Exact lowercase source SHA required");
   const workflow = await api(`repos/${REPO}/actions/workflows/pr-check.yml`);
   if (!positive(workflow?.id) || workflow.path !== WORKFLOW || workflow.state !== "active") fail("Invalid PR-check workflow identity");
@@ -93,21 +95,35 @@ export async function requirePrCheck({ api, sourceSha, treeFor, now = new Date()
   const runs = await pages(api,
     `repos/${REPO}/actions/workflows/${workflow.id}/runs?event=workflow_dispatch&branch=main&created=${encodeURIComponent(`>=${since}`)}`,
     "workflow_runs");
-  const candidates = runs.filter((run) => sourceFromRun(run, workflow.id) && success(run)
+  // Only completed outcomes participate. A pending run is not evidence; a
+  // retry of the selected run is still rejected by the snapshot checks below.
+  const candidates = runs.filter((run) => sourceFromRun(run, workflow.id) && run.status === "completed"
     && Number.isFinite(Date.parse(run.created_at)) && Date.parse(run.created_at) >= Date.parse(since)
-    && Date.parse(run.created_at) <= now.getTime());
-  if (candidates.length === 0) fail("No successful PR check in the bounded search");
+    && Date.parse(run.created_at) <= now.getTime())
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id);
+  if (candidates.length === 0) fail("No completed PR check in the bounded search");
   const sourceTree = await treeFor(sourceSha);
   if (!SHA.test(sourceTree ?? "")) fail("Invalid source tree");
+  // An exact SHA already proves tree equality and bounds the search: older
+  // runs cannot win. Newer non-exact SHAs must still be checked, even if red.
+  const exact = candidates.findIndex((run) => sourceFromRun(run, workflow.id) === sourceSha);
+  const relevant = exact < 0 ? candidates : candidates.slice(0, exact + 1);
+  const otherShas = [...new Set(relevant.map((run) => sourceFromRun(run, workflow.id)))]
+    .filter((sha) => sha !== sourceSha);
+  if (otherShas.length) {
+    if (typeof prefetchTrees !== "function") fail("Batched tree reader required");
+    await prefetchTrees(otherShas);
+  }
   const matching = [];
-  for (const run of candidates) {
+  for (const run of relevant) {
     const checkedSha = sourceFromRun(run, workflow.id);
-    const checkedTree = await treeFor(checkedSha);
+    const checkedTree = checkedSha === sourceSha ? sourceTree : await treeFor(checkedSha);
     if (!SHA.test(checkedTree ?? "")) fail("Invalid checked tree");
     if (checkedTree === sourceTree) matching.push({ run, checkedSha });
   }
-  if (matching.length !== 1) fail("No unique tree-equivalent successful PR check");
+  if (matching.length === 0) fail("No tree-equivalent completed PR check");
   const { run, checkedSha } = matching[0];
+  if (!success(run)) fail("Latest tree-equivalent PR check is unsuccessful");
   const fresh = await api(`repos/${REPO}/actions/runs/${run.id}`);
   if (sourceFromRun(fresh, workflow.id) !== checkedSha || !success(fresh)
       || fresh.id !== run.id || fresh.run_attempt !== run.run_attempt || fresh.head_sha !== run.head_sha) fail("PR-check run changed");
@@ -123,47 +139,68 @@ export async function requirePrCheck({ api, sourceSha, treeFor, now = new Date()
 // No transport output is public: even errors may contain private object paths.
 function command(program, args, options = {}) {
   const result = spawnSync(program, args, { encoding: "utf8", timeout: 60000, maxBuffer: 8 * 1024 * 1024, ...options });
+  if (result.error?.code === "ETIMEDOUT") fail("PR-check verification transport timed out");
   if (result.error || result.status !== 0) fail("PR-check verification transport failed");
   return result.stdout.trim();
 }
 
-export function privateTreeReader(env) {
+export function privateTreeReader(env, { runCommand = command, clock = Date.now } = {}) {
   let directory;
   let childEnv;
+  let deadline;
+  let fetches = 0;
   const cache = new Map();
-  return {
-    treeFor(sha) {
-      if (!SHA.test(sha)) fail("Invalid tree request");
-      if (cache.has(sha)) return cache.get(sha);
-      if (!directory) {
-        if (!env.SOURCE_DEPLOY_KEY) fail("Read-only source deploy key is required");
-        directory = mkdtempSync(join(env.RUNNER_TEMP || tmpdir(), "scai-pr-check-"));
-        const key = join(directory, "key");
-        const hosts = join(directory, "known_hosts");
-        writeFileSync(key, `${env.SOURCE_DEPLOY_KEY}\n`, { mode: 0o600 });
-        childEnv = { ...env };
-        delete childEnv.SOURCE_DEPLOY_KEY;
-        delete childEnv.GH_TOKEN;
-        delete childEnv.GITHUB_TOKEN;
-        const hostKey = command("ssh-keyscan", ["-t", "ed25519", "github.com"], { env: childEnv })
-          .split("\n").filter((line) => line && !line.startsWith("#"));
-        if (hostKey.length !== 1) fail("Invalid GitHub host key");
-        writeFileSync(hosts, `${hostKey[0]}\n`, { mode: 0o600 });
-        const fingerprint = command("ssh-keygen", ["-lf", hosts, "-E", "sha256"], { env: childEnv }).split(/\s+/)[1];
-        if (fingerprint !== "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU") fail("GitHub host key pin mismatch");
-        const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
-        childEnv.GIT_SSH_COMMAND = `ssh -i ${quote(key)} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ${quote(`UserKnownHostsFile=${hosts}`)}`;
-        childEnv.GIT_TERMINAL_PROMPT = "0";
-        command("git", ["init", "--bare", join(directory, "source.git")], { env: childEnv });
-      }
-      const git = (args) => command("git", ["-C", join(directory, "source.git"), ...args], { env: childEnv });
-      // Fetch commit/tree objects only; never check out or execute private code.
-      git(["fetch", "--quiet", "--no-tags", "--depth=1", "--filter=blob:none", "git@github.com:Subunit-UG/scai-app.git", sha]);
+  const execute = (program, args) => {
+    deadline ??= clock() + TREE_BUDGET_MS;
+    const remaining = deadline - clock();
+    if (remaining <= 0) fail("PR-check tree verification exceeded the 120-second budget");
+    const result = runCommand(program, args, { env: childEnv, timeout: Math.min(60000, remaining) });
+    if (clock() >= deadline) fail("PR-check tree verification exceeded the 120-second budget");
+    return result;
+  };
+  const prefetch = (shas) => {
+    if (!Array.isArray(shas) || shas.some((sha) => !SHA.test(sha))) fail("Invalid tree request");
+    const missing = [...new Set(shas)].filter((sha) => !cache.has(sha));
+    if (!missing.length) return;
+    if (missing.length > PAGE_SIZE * MAX_PAGES) fail("PR-check tree batch exceeds 1000 SHAs");
+    if (fetches >= MAX_TREE_FETCHES) fail("PR-check tree fetch limit exceeded (maximum 2 batches)");
+    if (!directory) {
+      if (!env.SOURCE_DEPLOY_KEY) fail("Read-only source deploy key is required");
+      directory = mkdtempSync(join(env.RUNNER_TEMP || tmpdir(), "scai-pr-check-"));
+      const key = join(directory, "key");
+      const hosts = join(directory, "known_hosts");
+      writeFileSync(key, `${env.SOURCE_DEPLOY_KEY}\n`, { mode: 0o600 });
+      childEnv = { ...env };
+      delete childEnv.SOURCE_DEPLOY_KEY;
+      delete childEnv.GH_TOKEN;
+      delete childEnv.GITHUB_TOKEN;
+      const hostKey = execute("ssh-keyscan", ["-t", "ed25519", "github.com"])
+        .split("\n").filter((line) => line && !line.startsWith("#"));
+      if (hostKey.length !== 1) fail("Invalid GitHub host key");
+      writeFileSync(hosts, `${hostKey[0]}\n`, { mode: 0o600 });
+      const fingerprint = execute("ssh-keygen", ["-lf", hosts, "-E", "sha256"]).split(/\s+/)[1];
+      if (fingerprint !== "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU") fail("GitHub host key pin mismatch");
+      const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+      childEnv.GIT_SSH_COMMAND = `ssh -i ${quote(key)} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ${quote(`UserKnownHostsFile=${hosts}`)}`;
+      childEnv.GIT_TERMINAL_PROMPT = "0";
+      execute("git", ["init", "--bare", join(directory, "source.git")]);
+    }
+    const git = (args) => execute("git", ["-C", join(directory, "source.git"), ...args]);
+    // Fetch commit/tree objects only; never check out or execute private code.
+    fetches++;
+    git(["fetch", "--quiet", "--no-tags", "--depth=1", "--filter=blob:none", "git@github.com:Subunit-UG/scai-app.git", ...missing]);
+    for (const sha of missing) {
       if (git(["rev-parse", `${sha}^{commit}`]) !== sha) fail("Source commit drift");
       const tree = git(["rev-parse", `${sha}^{tree}`]);
       if (!SHA.test(tree)) fail("Invalid Git tree");
       cache.set(sha, tree);
-      return tree;
+    }
+  };
+  return {
+    prefetch,
+    treeFor(sha) {
+      prefetch([sha]);
+      return cache.get(sha);
     },
     close() { if (directory) rmSync(directory, { recursive: true, force: true }); },
   };
@@ -180,7 +217,8 @@ export async function main(env = process.env) {
   };
   const reader = privateTreeReader(env);
   try {
-    const proof = await requirePrCheck({ api, sourceSha: env.SOURCE_SHA, treeFor: (sha) => reader.treeFor(sha) });
+    const proof = await requirePrCheck({ api, sourceSha: env.SOURCE_SHA,
+      treeFor: (sha) => reader.treeFor(sha), prefetchTrees: (shas) => reader.prefetch(shas) });
     if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `pr_check_run_id=${proof.runId}\npr_check_tree=${proof.tree}\n`);
     console.log(`PASS required-pr-check run=${proof.runId} attempt=${proof.attempt} source=${proof.sourceSha} checked=${proof.checkedSha} tree=${proof.tree}`);
     return proof;

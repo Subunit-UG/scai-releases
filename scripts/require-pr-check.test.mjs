@@ -19,19 +19,29 @@ function harness() {
   const run = fixture("41977805327-run");
   const state = {
     run, runs: [run], jobs: fixture("41977805327-jobs").jobs,
-    workflow: fixture("workflow"), trees: fixture("trees"), calls: [],
+    workflow: fixture("workflow"), trees: fixture("trees"), calls: [], treeCalls: [], batches: [],
   };
   state.api = async (path) => {
     state.calls.push(path);
     if (path.endsWith("/actions/workflows/pr-check.yml")) return state.workflow;
     if (path.includes("/runs?")) return { total_count: state.runs.length, workflow_runs: state.runs };
     if (path.includes("/jobs?")) return { total_count: state.jobs.length, jobs: state.jobs };
-    if (path.endsWith(`/runs/${run.id}`)) return state.run;
+    const id = /\/runs\/([0-9]+)$/.exec(path)?.[1];
+    if (id) return state.runs.find((item) => item.id === Number(id));
     throw new Error("Unexpected fixture API request");
   };
   state.verify = (sourceSha = GREEN, api = state.api) => requirePrCheck({
-    api, sourceSha, now: NOW, treeFor: async (sha) => state.trees[sha],
+    api, sourceSha, now: NOW,
+    treeFor: async (sha) => { state.treeCalls.push(sha); return state.trees[sha]; },
+    prefetchTrees: async (shas) => { state.batches.push(shas); },
   });
+  state.select = (selected) => {
+    for (const job of state.jobs) {
+      job.run_id = selected.id;
+      job.run_attempt = selected.run_attempt;
+      job.head_sha = selected.head_sha;
+    }
+  };
   return state;
 }
 
@@ -52,7 +62,7 @@ test("recorded build success is not a PR check and cannot approve 574c1169", asy
   // The last green PR run and the successful release both exist; neither
   // proves the untested tree. This is the actual historical bypass shape.
   h.runs.push(release);
-  await assert.rejects(h.verify(UNCHECKED), /No unique tree-equivalent/);
+  await assert.rejects(h.verify(UNCHECKED), /No tree-equivalent/);
 });
 
 test("squash commit with a different SHA and identical tree is accepted", async () => {
@@ -66,19 +76,19 @@ test("rejects equal SHA prefixes with different trees", async () => {
   const h = harness();
   const other = GREEN.slice(0, 8) + "b".repeat(32);
   h.trees[other] = "c".repeat(40);
-  await assert.rejects(h.verify(other), /No unique tree-equivalent/);
+  await assert.rejects(h.verify(other), /No tree-equivalent/);
 });
 
 test("rejects a failed run", async () => {
   const h = harness();
   h.run.conclusion = "failure";
-  await assert.rejects(h.verify(), /No successful PR check/);
+  await assert.rejects(h.verify(), /Latest tree-equivalent PR check is unsuccessful/);
 });
 
 for (const conclusion of ["cancelled", "skipped", "neutral", null, "timed_out"]) {
   test(`rejects run conclusion ${conclusion}`, async () => {
     const h = harness(); h.run.conclusion = conclusion;
-    await assert.rejects(h.verify(), /No successful PR check/);
+    await assert.rejects(h.verify(), /Latest tree-equivalent PR check is unsuccessful/);
   });
 }
 
@@ -90,7 +100,7 @@ for (const [field, value] of [
 ]) {
   test(`rejects foreign, expired or malformed run: ${field}=${JSON.stringify(value)}`, async () => {
     const h = harness(); h.run[field] = value;
-    await assert.rejects(h.verify(), /No successful PR check/);
+    await assert.rejects(h.verify(), /No completed PR check/);
   });
 }
 
@@ -103,7 +113,7 @@ for (const title of [
 ]) {
   test(`rejects non-exact source/request title: ${title.slice(0, 25)}`, async () => {
     const h = harness(); h.run.display_title = title;
-    await assert.rejects(h.verify(), /No successful PR check/);
+    await assert.rejects(h.verify(), /No completed PR check/);
   });
 }
 
@@ -179,9 +189,101 @@ test("run retries or changed conclusion invalidate the verification snapshot", a
   }
 });
 
-test("multiple tree-equivalent successful runs are ambiguous", async () => {
-  const h = harness(); h.runs.push({ ...h.run, id: h.run.id + 1 });
-  await assert.rejects(h.verify(), /No unique tree-equivalent/);
+test("two green tree-equivalent runs pass with the newest by created_at", async () => {
+  const h = harness();
+  // A lower ID with a later creation time must win, regardless of API order.
+  const newest = { ...h.run, id: h.run.id - 1, created_at: "2026-11-07T12:00:00Z",
+    display_title: h.run.display_title.replace(GREEN, UNCHECKED) };
+  h.runs.push(newest);
+  h.trees[UNCHECKED] = h.trees[GREEN];
+  h.select(newest);
+  assert.equal((await h.verify()).runId, newest.id);
+  assert.deepEqual(h.batches, [[UNCHECKED]]);
+});
+
+test("green then red tree-equivalent runs fail on the newest", async () => {
+  const h = harness();
+  h.runs.push({ ...h.run, id: h.run.id + 1, conclusion: "failure",
+    display_title: h.run.display_title.replace(GREEN, UNCHECKED) });
+  h.trees[UNCHECKED] = h.trees[GREEN];
+  await assert.rejects(h.verify(), /Latest tree-equivalent PR check is unsuccessful/);
+});
+
+test("red then green tree-equivalent runs pass on the newest", async () => {
+  const h = harness();
+  const newest = { ...h.run, id: h.run.id + 1 };
+  h.run.conclusion = "failure";
+  h.runs.unshift(newest);
+  h.select(newest);
+  assert.equal((await h.verify()).runId, newest.id);
+});
+
+test("equal creation timestamps use descending run ID deterministically", async () => {
+  for (const reverse of [false, true]) {
+    const h = harness();
+    const newest = { ...h.run, id: h.run.id + 1 };
+    h.runs.push(newest);
+    if (reverse) h.runs.reverse();
+    h.select(newest);
+    assert.equal((await h.verify()).runId, newest.id);
+  }
+});
+
+test("newer cancelled or skipped outcomes invalidate older green evidence", async () => {
+  for (const conclusion of ["cancelled", "skipped", "neutral", "timed_out", null]) {
+    const h = harness();
+    h.runs.push({ ...h.run, id: h.run.id + 1, conclusion });
+    await assert.rejects(h.verify(), /Latest tree-equivalent PR check is unsuccessful/);
+  }
+});
+
+test("pending runs are ignored while the latest completed evidence is checked", async () => {
+  for (const status of ["queued", "in_progress", "waiting"]) {
+    const h = harness();
+    h.runs.push({ ...h.run, id: h.run.id + 1, status, conclusion: null });
+    assert.equal((await h.verify()).runId, h.run.id);
+  }
+});
+
+test("newest green run still requires its own mandatory jobs", async () => {
+  const h = harness();
+  const newest = { ...h.run, id: h.run.id + 1 };
+  h.runs.push(newest); h.select(newest);
+  h.jobs[0].conclusion = "skipped";
+  await assert.rejects(h.verify(), /job is missing, skipped or unsuccessful/);
+});
+
+test("exact source SHA avoids older tree queries but not newer mismatches", async () => {
+  const h = harness();
+  h.runs.push({ ...h.run, id: h.run.id - 1, display_title: h.run.display_title.replace(GREEN, UNCHECKED) });
+  assert.equal((await h.verify()).runId, h.run.id);
+  assert.deepEqual(h.treeCalls, [GREEN]);
+  assert.deepEqual(h.batches, []);
+  h.runs.push({ ...h.run, id: h.run.id + 1, conclusion: "failure",
+    display_title: h.run.display_title.replace(GREEN, UNCHECKED) });
+  assert.equal((await h.verify()).runId, h.run.id);
+  assert.deepEqual(h.batches, [[UNCHECKED]]);
+});
+
+test("non-exact candidate trees are deduplicated and prefetched once", async () => {
+  const h = harness();
+  const other = "a".repeat(40);
+  h.trees[other] = "c".repeat(40);
+  h.runs.push(...[UNCHECKED, other, UNCHECKED].map((sha, index) => ({ ...h.run,
+    id: h.run.id + index + 1, display_title: h.run.display_title.replace(GREEN, sha) })));
+  assert.equal((await h.verify()).runId, h.run.id);
+  assert.deepEqual(h.batches, [[UNCHECKED, other]]);
+});
+
+test("batch failures or invalid checked trees never fall back to older evidence", async () => {
+  const h = harness();
+  h.runs.push({ ...h.run, id: h.run.id + 1, display_title: h.run.display_title.replace(GREEN, UNCHECKED) });
+  h.trees[UNCHECKED] = null;
+  await assert.rejects(h.verify(), /Invalid checked tree/);
+  await assert.rejects(requirePrCheck({ api: h.api, sourceSha: GREEN, now: NOW,
+    treeFor: async () => h.trees[GREEN],
+    prefetchTrees: async () => { throw new Error("batch unavailable"); },
+  }), /batch unavailable/);
 });
 
 test("pagination follows a second run page instead of selecting the first page", async () => {
@@ -294,6 +396,8 @@ test("tree reader compares real Git trees without private checkout or credential
     const tree = exec(["-C", source, "mktree"], "");
     const a = exec(["-C", source, "commit-tree", tree], "head\n");
     const b = exec(["-C", source, "commit-tree", tree, "-p", a], "squash\n");
+    const c = exec(["-C", source, "commit-tree", tree, "-p", b], "retry\n");
+    const d = exec(["-C", source, "commit-tree", tree, "-p", c], "later\n");
     const bin = join(dir, "bin"); mkdirSync(bin);
     const script = (name, code) => writeFileSync(join(bin, name), `#!${process.execPath}\n${code}`, { mode: 0o755 });
     script("ssh-keyscan", 'console.log("github.com ssh-ed25519 fixture");');
@@ -303,13 +407,48 @@ test("tree reader compares real Git trees without private checkout or credential
       if(process.env.SOURCE_DEPLOY_KEY || process.env.GH_TOKEN || process.env.GITHUB_TOKEN) process.exit(42);
       const args=process.argv.slice(2).map(a=>a==='git@github.com:Subunit-UG/scai-app.git'?${JSON.stringify(source)}:a);
       if(args.includes('checkout')) process.exit(43);
+      if(args.includes('fetch')) require('node:fs').appendFileSync(${JSON.stringify(join(dir, "fetches.jsonl"))},JSON.stringify(args)+'\\n');
       const r=spawnSync(${JSON.stringify(git)},args,{encoding:'utf8'});
       process.stdout.write(r.stdout||''); process.stderr.write(r.stderr||''); process.exit(r.status??1);
     `);
     const env = { ...process.env, RUNNER_TEMP: dir, PATH: `${bin}:${process.env.PATH}`, SOURCE_DEPLOY_KEY: "fixture-key", GH_TOKEN: "fixture-token", GITHUB_TOKEN: "fixture-token" };
     const reader = privateTreeReader(env);
-    try { assert.equal(reader.treeFor(a), tree); assert.equal(reader.treeFor(b), tree); }
+    try {
+      assert.equal(reader.treeFor(a), tree);
+      reader.prefetch([b, c, d, b]);
+      for (const sha of [a, b, c, d]) assert.equal(reader.treeFor(sha), tree);
+      const fetches = readFileSync(join(dir, "fetches.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+      assert.equal(fetches.length, 2, "one source fetch plus exactly one batch for N candidate SHAs");
+      assert.deepEqual(fetches[1].slice(-3), [b, c, d]);
+      assert.throws(() => reader.treeFor("a".repeat(40)), /fetch limit exceeded/);
+      assert.equal(readFileSync(join(dir, "fetches.jsonl"), "utf8").trim().split("\n").length, 2);
+    }
     finally { reader.close(); }
     assert.ok(!readdirSync(dir).some((name) => name.startsWith("scai-pr-check-")));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("tree reader enforces its time and batch-size budgets without network access", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pr-tree-limits-"));
+  const env = { RUNNER_TEMP: dir, SOURCE_DEPLOY_KEY: "fixture-key" };
+  try {
+    const oversized = privateTreeReader(env);
+    try {
+      assert.throws(() => oversized.prefetch(Array.from({ length: 1001 }, (_, i) => i.toString(16).padStart(40, "0"))), /batch exceeds 1000/);
+      assert.throws(() => oversized.prefetch(["--help"]), /Invalid tree request/);
+    } finally { oversized.close(); }
+    let elapsed = 0;
+    const timeouts = [];
+    const timed = privateTreeReader(env, { clock: () => elapsed, runCommand: (program, args, options) => {
+      timeouts.push(options.timeout);
+      if (program === "ssh-keyscan") { elapsed += 50000; return "github.com ssh-ed25519 fixture"; }
+      if (program === "ssh-keygen") { elapsed += 50000; return "256 SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU github.com"; }
+      elapsed += 20000;
+      return "";
+    } });
+    try { assert.throws(() => timed.treeFor(GREEN), /120-second budget/); }
+    finally { timed.close(); }
+    assert.deepEqual(timeouts, [60000, 60000, 20000]);
+    assert.equal(readdirSync(dir).length, 0, "temporary credentials removed on failure");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
