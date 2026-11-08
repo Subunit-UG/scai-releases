@@ -67,12 +67,12 @@ async function pages(api, path, field, firstPage) {
 }
 
 // The Actions search cap is per query, not a limit on valid release evidence.
+// Yield complete windows newest first; stop consuming after evidence is found.
 // Fully paginate disjoint daily windows; subdivide saturated windows down to
 // seconds. Even exactly 1000 may be a truncated response, so split it too.
-async function runWindows(api, workflowId, since, through) {
-  const runs = [];
+async function* runWindows(api, workflowId, since, through, singleWindow = false) {
   const seen = new Set();
-  const window = async (start, end) => {
+  const window = async function* (start, end) {
     const range = `${new Date(start * 1000).toISOString()}..${new Date(end * 1000).toISOString()}`;
     const path = `repos/${REPO}/actions/workflows/${workflowId}/runs?event=workflow_dispatch&branch=main&created=${encodeURIComponent(range)}`;
     const first = await api(`${path}&per_page=${PAGE_SIZE}&page=1`);
@@ -81,23 +81,29 @@ async function runWindows(api, workflowId, since, through) {
     if (first.total_count >= PAGE_SIZE * MAX_PAGES) {
       if (start === end) fail("PR-check search window saturated at one second; retry after Actions activity settles or contact release maintainers");
       const middle = Math.floor((start + end) / 2);
-      await window(middle + 1, end);
-      await window(start, middle);
+      yield* window(middle + 1, end);
+      yield* window(start, middle);
       return;
     }
-    for (const run of await pages(api, path, "workflow_runs", first)) {
+    const runs = await pages(api, path, "workflow_runs", first);
+    for (const run of runs) {
       if (seen.has(run.id)) fail("Duplicate Actions identity across search windows");
       seen.add(run.id);
-      runs.push(run);
     }
+    yield runs;
   };
   const lower = Math.floor(since / 1000);
+  if (singleWindow) {
+    const runs = [];
+    for await (const batch of window(lower, Math.floor(through / 1000))) runs.push(...batch);
+    yield runs;
+    return;
+  }
   for (let end = Math.floor(through / 1000); end >= lower;) {
     const start = Math.max(lower, end - 86400 + 1);
-    await window(start, end);
+    yield* window(start, end);
     end = start - 1;
   }
-  return runs;
 }
 
 export function requireJobs(jobs, run) {
@@ -141,65 +147,75 @@ export async function requirePrCheck({ api, sourceSha, treeFor, prefetchTrees, n
   const since = now.getTime() - LOOKBACK_DAYS * 86400000;
   const trees = new Map();
   let sourceTree;
-  const select = async () => {
+  const currentTime = () => now.getTime() + (clock() - started);
+  const select = async (lower, through, singleWindow = false) => {
     budget();
-    const through = now.getTime() + (clock() - started);
-    const runs = await runWindows(request, workflow.id, since, through);
-    // Only completed outcomes participate. A pending run is not evidence; a
-    // retry of the selected run is still rejected by the snapshot checks below.
-    const candidates = runs.filter((run) => sourceFromRun(run, workflow.id) && run.status === "completed"
-      && Number.isFinite(Date.parse(run.created_at)) && Date.parse(run.created_at) >= since
-      && Date.parse(run.created_at) <= through)
-      .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id);
-    if (candidates.length === 0) fail("No completed PR check in the bounded search");
-    if (!sourceTree) {
-      sourceTree = await treeFor(sourceSha);
-      if (!SHA.test(sourceTree ?? "")) fail("Invalid source tree");
-      trees.set(sourceSha, sourceTree);
-    }
-    // An exact SHA already proves tree equality and bounds the search: older
-    // runs cannot win. Newer non-exact SHAs must still be checked, even if red.
-    const exact = candidates.findIndex((run) => sourceFromRun(run, workflow.id) === sourceSha);
-    const relevant = exact < 0 ? candidates : candidates.slice(0, exact + 1);
-    const otherShas = [...new Set(relevant.map((run) => sourceFromRun(run, workflow.id)))]
-      .filter((sha) => !trees.has(sha));
-    if (otherShas.length) {
-      if (typeof prefetchTrees !== "function") fail("Batched tree reader required");
-      await prefetchTrees(otherShas);
-      for (const sha of otherShas) {
-        const tree = await treeFor(sha);
-        if (!SHA.test(tree ?? "")) fail("Invalid checked tree");
-        trees.set(sha, tree);
+    let completed = false;
+    for await (const runs of runWindows(request, workflow.id, lower, through, singleWindow)) {
+      // Only completed outcomes participate. A pending run is not evidence; a
+      // retry of the selected run is still rejected by the snapshot checks below.
+      const candidates = runs.filter((run) => sourceFromRun(run, workflow.id) && run.status === "completed"
+        && Number.isFinite(Date.parse(run.created_at)) && Date.parse(run.created_at) >= lower
+        && Date.parse(run.created_at) <= through)
+        .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id);
+      if (candidates.length === 0) continue;
+      completed = true;
+      if (!sourceTree) {
+        sourceTree = await treeFor(sourceSha);
+        if (!SHA.test(sourceTree ?? "")) fail("Invalid source tree");
+        trees.set(sourceSha, sourceTree);
+      }
+      // An exact SHA already proves tree equality and bounds the search: older
+      // runs cannot win. Newer non-exact SHAs must still be checked, even if red.
+      const exact = candidates.findIndex((run) => sourceFromRun(run, workflow.id) === sourceSha);
+      const relevant = exact < 0 ? candidates : candidates.slice(0, exact + 1);
+      const otherShas = [...new Set(relevant.map((run) => sourceFromRun(run, workflow.id)))]
+        .filter((sha) => !trees.has(sha));
+      if (otherShas.length) {
+        if (typeof prefetchTrees !== "function") fail("Batched tree reader required");
+        await prefetchTrees(otherShas);
+      }
+      for (const run of relevant) {
+        const checkedSha = sourceFromRun(run, workflow.id);
+        const checkedTree = trees.has(checkedSha) ? trees.get(checkedSha) : await treeFor(checkedSha);
+        if (!SHA.test(checkedTree ?? "")) fail("Invalid checked tree");
+        trees.set(checkedSha, checkedTree);
+        if (checkedTree === sourceTree) {
+          budget();
+          return { run, checkedSha };
+        }
       }
     }
-    const matching = [];
-    for (const run of relevant) {
-      const checkedSha = sourceFromRun(run, workflow.id);
-      const checkedTree = trees.get(checkedSha);
-      if (!SHA.test(checkedTree ?? "")) fail("Invalid checked tree");
-      if (checkedTree === sourceTree) matching.push({ run, checkedSha });
-    }
-    if (matching.length === 0) fail("No tree-equivalent completed PR check");
-    budget();
-    return matching[0];
+    if (!completed) fail("No completed PR check in the bounded search");
+    fail("No tree-equivalent completed PR check");
   };
-  const { run, checkedSha } = await select();
+  let { run, checkedSha } = await select(since, currentTime());
   if (!success(run)) fail("Latest tree-equivalent PR check is unsuccessful");
   const fresh = await request(`repos/${REPO}/actions/runs/${run.id}`);
   if (sourceFromRun(fresh, workflow.id) !== checkedSha || !success(fresh)
       || fresh.id !== run.id || fresh.run_attempt !== run.run_attempt || fresh.head_sha !== run.head_sha) fail("PR-check run changed");
   const jobs = await pages(request, `repos/${REPO}/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs`, "jobs");
   requireJobs(jobs, fresh);
-  // Re-read all candidates: a younger pending run may have completed while
-  // tree objects or jobs were being verified. Never approve the old selection.
-  const latest = await select();
-  if (latest.run.id !== run.id || latest.checkedSha !== checkedSha || !success(latest.run)
+  // One fresh, fully paginated range is the last enumeration. The moving
+  // upper bound includes runs created while the historical search was active.
+  const latest = await select(Date.parse(run.created_at), currentTime(), true);
+  if (!success(latest.run)) fail("Latest tree-equivalent PR check is unsuccessful");
+  if (latest.run.id === run.id && (latest.checkedSha !== checkedSha
       || latest.run.run_attempt !== run.run_attempt || latest.run.head_sha !== run.head_sha
-      || latest.run.created_at !== run.created_at) fail("PR-check candidate selection changed during verification");
-  // A concurrent rerun invalidates the snapshot instead of mixing attempts.
+      || latest.run.created_at !== run.created_at)) fail("PR-check candidate selection changed during verification");
+  if (latest.run.id !== run.id && !(Date.parse(latest.run.created_at) > Date.parse(run.created_at)
+      || (latest.run.created_at === run.created_at && latest.run.id > run.id))) fail("PR-check candidate selection changed during verification");
+  // A newer successful run may replace the selection once. Verify its own
+  // attempt and jobs; never enumerate again or fall back to older evidence.
+  ({ run, checkedSha } = latest);
   const final = await request(`repos/${REPO}/actions/runs/${run.id}`);
   if (sourceFromRun(final, workflow.id) !== checkedSha || !success(final)
       || final.id !== run.id || final.run_attempt !== run.run_attempt || final.head_sha !== run.head_sha) fail("PR-check run changed during verification");
+  const finalJobs = await pages(request, `repos/${REPO}/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs`, "jobs");
+  requireJobs(finalJobs, final);
+  const confirmed = await request(`repos/${REPO}/actions/runs/${run.id}`);
+  if (sourceFromRun(confirmed, workflow.id) !== checkedSha || !success(confirmed)
+      || confirmed.id !== run.id || confirmed.run_attempt !== run.run_attempt || confirmed.head_sha !== run.head_sha) fail("PR-check run changed during verification");
   return { runId: run.id, attempt: run.run_attempt, checkedSha, sourceSha, tree: sourceTree };
 }
 

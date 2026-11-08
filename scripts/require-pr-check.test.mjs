@@ -60,7 +60,7 @@ test("recorded successful PR check approves d35c5592 and its mandatory jobs", as
   assert.equal(proof.runId, 41977805327);
   assert.equal(proof.tree, h.trees[GREEN]);
   assert.ok(h.calls.some((path) => path.includes("/attempts/1/jobs?")));
-  assert.ok(h.calls.some((path) => path.includes("2026-10-09T12%3A00%3A00.000Z")));
+  assert.ok(!h.calls.some((path) => path.includes("2026-10-09T12%3A00%3A00.000Z")), "stop before irrelevant history");
 });
 
 test("recorded build success is not a PR check and cannot approve 574c1169", async () => {
@@ -185,7 +185,7 @@ test("API failure at every stage rejects approval", async () => {
 
 test("run retries or changed conclusion invalidate the verification snapshot", async () => {
   for (const change of ["run_attempt", "conclusion", "head_sha"]) {
-    for (const nth of [1, 2]) {
+    for (const nth of [1, 2, 3]) {
       const h = harness(); let reads = 0;
       await assert.rejects(h.verify(GREEN, async (path) => {
         const data = await h.api(path);
@@ -201,7 +201,7 @@ test("run retries or changed conclusion invalidate the verification snapshot", a
 test("two green tree-equivalent runs pass with the newest by created_at", async () => {
   const h = harness();
   // A lower ID with a later creation time must win, regardless of API order.
-  const newest = { ...h.run, id: h.run.id - 1, created_at: "2026-11-07T12:00:00Z",
+  const newest = { ...h.run, id: h.run.id - 1, created_at: "2026-11-05T08:02:47Z",
     display_title: h.run.display_title.replace(GREEN, UNCHECKED) };
   h.runs.push(newest);
   h.trees[UNCHECKED] = h.trees[GREEN];
@@ -255,7 +255,7 @@ test("pending runs are ignored while the latest completed evidence is checked", 
 });
 
 test("candidate refresh rejects a younger run completing during verification", async () => {
-  for (const conclusion of ["failure", "success", "cancelled"]) {
+  for (const conclusion of ["failure", "cancelled"]) {
     for (const during of ["tree", "jobs"]) {
       const h = harness();
       const younger = { ...h.run, id: h.run.id + 1, status: "in_progress", conclusion: null,
@@ -267,7 +267,7 @@ test("candidate refresh rejects a younger run completing during verification", a
         api: async (path) => { if (during === "jobs" && path.includes("/jobs?")) finish(); return h.api(path); },
         treeFor: async (sha) => { if (during === "tree") finish(); return h.trees[sha]; },
         prefetchTrees: async () => {},
-      }), /candidate selection changed/);
+      }), /Latest tree-equivalent PR check is unsuccessful/);
     }
   }
 });
@@ -283,7 +283,120 @@ test("candidate refresh uses the current upper time bound for newly created runs
       }
       return h.api(path);
     }, treeFor: async (sha) => h.trees[sha],
-  }), /candidate selection changed/);
+  }), /Latest tree-equivalent PR check is unsuccessful/);
+});
+
+test("search stops at the first matching completed window", async () => {
+  const h = harness();
+  h.run.created_at = "2026-11-08T11:59:00Z";
+  h.runs.push({ ...h.run, id: h.run.id - 1, created_at: "2026-11-07T10:00:00Z",
+    display_title: h.run.display_title.replace(GREEN, UNCHECKED) });
+  assert.equal((await h.verify()).runId, h.run.id);
+  const lists = h.calls.filter((path) => path.includes("/runs?"));
+  assert.equal(lists.length, 2, "one search window and one fresh final range");
+  assert.deepEqual(h.treeCalls, [GREEN]);
+  assert.deepEqual(h.batches, []);
+});
+
+test("within a complete window the first matching tree stops older comparisons", async () => {
+  const h = harness();
+  const squash = "b".repeat(40);
+  h.trees[squash] = h.trees[GREEN];
+  h.runs.push({ ...h.run, id: h.run.id - 1, display_title: h.run.display_title.replace(GREEN, UNCHECKED) });
+  assert.equal((await h.verify(squash)).runId, h.run.id);
+  assert.deepEqual(h.treeCalls, [squash, GREEN], "do not resolve older candidate trees");
+});
+
+test("younger matching failure during the second historical window blocks PASS", async () => {
+  const h = harness();
+  const younger = { ...h.run, id: h.run.id + 1, created_at: "2026-11-08T11:59:00Z",
+    status: "in_progress", conclusion: null };
+  h.runs.push(younger);
+  let lists = 0;
+  await assert.rejects(h.verify(GREEN, async (path) => {
+    if (path.includes("/runs?") && ++lists === 2) {
+      younger.status = "completed"; younger.conclusion = "failure";
+    }
+    return h.api(path);
+  }), /Latest tree-equivalent PR check is unsuccessful/);
+  assert.equal(lists, 5, "four search windows followed by one fresh range");
+});
+
+test("new successful run created and completed during search replaces old evidence", async () => {
+  const h = harness();
+  let elapsed = 0, lists = 0;
+  const newer = { ...h.run, id: h.run.id + 1, created_at: "2026-11-08T12:00:01Z" };
+  const proof = await requirePrCheck({ sourceSha: GREEN, now: NOW, clock: () => elapsed,
+    api: async (path) => {
+      if (path.includes("/runs?") && ++lists === 2) { elapsed = 2000; h.runs.push(newer); }
+      if (path.includes(`/runs/${newer.id}`)) h.select(newer);
+      return h.api(path);
+    }, treeFor: async (sha) => h.trees[sha],
+  });
+  assert.equal(proof.runId, newer.id);
+  assert.equal(lists, 5, "one final range and no later enumeration");
+  assert.deepEqual(h.calls.slice(-3).map((path) => path.replace(/\?.*$/, "")), [
+    `repos/Subunit-UG/scai-releases/actions/runs/${newer.id}`,
+    `repos/Subunit-UG/scai-releases/actions/runs/${newer.id}/attempts/1/jobs`,
+    `repos/Subunit-UG/scai-releases/actions/runs/${newer.id}`,
+  ]);
+});
+
+test("final range is fully paginated and rejects a younger failure on page two", async () => {
+  const h = harness();
+  h.run.created_at = "2026-11-08T11:59:00Z";
+  let added = false;
+  await assert.rejects(h.verify(GREEN, async (path) => {
+    if (!added && path.includes("/jobs?")) {
+      added = true;
+      h.runs.push(...Array.from({ length: 100 }, (_, index) => ({ ...h.run,
+        id: h.run.id + index + 1, conclusion: index === 99 ? "failure" : "success" })));
+    }
+    return h.api(path);
+  }), /Latest tree-equivalent PR check is unsuccessful/);
+  assert.ok(h.calls.some((path) => path.includes("/runs?") && path.endsWith("page=2")));
+});
+
+test("replacement evidence must pass its own jobs and final attempt checks", async () => {
+  for (const broken of ["jobs", "attempt"]) {
+    const h = harness();
+    const newer = { ...h.run, id: h.run.id + 1, created_at: "2026-11-08T11:59:00Z" };
+    let added = false;
+    await assert.rejects(h.verify(GREEN, async (path) => {
+      if (!added && path.includes("/jobs?")) { added = true; h.runs.push(newer); }
+      if (path.includes(`/runs/${newer.id}`)) {
+        h.select(newer);
+        if (broken === "jobs") h.jobs[0].conclusion = "skipped";
+        else return { ...newer, run_attempt: 2 };
+      }
+      return h.api(path);
+    }), broken === "jobs" ? /job is missing, skipped or unsuccessful/ : /run changed/);
+  }
+});
+
+test("simple recent evidence uses at most eight API calls and two tree fetch batches", async () => {
+  const h = harness();
+  h.run.created_at = "2026-11-08T11:59:00Z";
+  const squash = "b".repeat(40);
+  h.trees[squash] = h.trees[GREEN];
+  assert.equal((await h.verify(squash)).runId, h.run.id);
+  assert.ok(h.calls.length <= 8, `API calls: ${h.calls.length}`);
+  assert.deepEqual(h.treeCalls, [squash, GREEN]);
+  assert.deepEqual(h.batches, [[GREEN]]);
+});
+
+test("four-second API latency passes the verification budget", async () => {
+  const h = harness();
+  h.run.created_at = "2026-11-08T11:59:00Z";
+  let elapsed = 0;
+  const proof = await requirePrCheck({ sourceSha: GREEN, now: NOW, clock: () => elapsed,
+    api: async (path, { timeout }) => {
+      assert.ok(timeout >= 4000); elapsed += 4000; return h.api(path);
+    }, treeFor: async (sha) => h.trees[sha],
+  });
+  assert.equal(proof.runId, h.run.id);
+  assert.equal(h.calls.length, 8);
+  assert.equal(elapsed, 32000);
 });
 
 test("newest green run still requires its own mandatory jobs", async () => {
@@ -339,7 +452,7 @@ test("pagination follows a second run page instead of selecting the first page",
 test("time-window search approves fresh exact evidence beyond 1000 runs", async () => {
   const h = harness();
   const older = Array.from({ length: 1100 }, (_, index) => ({ ...h.run, id: index + 1,
-    created_at: new Date(Date.parse("2026-11-08T00:00:00Z") + index * 1000).toISOString(),
+    created_at: new Date(Date.parse("2026-11-08T11:40:00Z") + index * 1000).toISOString(),
     conclusion: "failure", display_title: h.run.display_title.replace(GREEN, UNCHECKED) }));
   h.run.created_at = "2026-11-08T11:59:59Z";
   h.runs = [...older, h.run];
@@ -348,7 +461,8 @@ test("time-window search approves fresh exact evidence beyond 1000 runs", async 
   assert.deepEqual(h.batches, []);
   assert.ok(h.calls.some((path) => path.includes("/runs?") && path.endsWith("page=6")), "subwindows must be fully paginated");
   const ranges = h.calls.filter((path) => path.includes("/runs?")).map((path) => new URL(`https://fixture.invalid/${path}`).searchParams.get("created"));
-  assert.ok(new Set(ranges).size > 31, "the saturated day must be subdivided");
+  assert.ok(new Set(ranges).size > 2, "the saturated day must be subdivided");
+  assert.ok(ranges.every((range) => Date.parse(range.split("..")[0]) >= Date.parse("2026-11-07T12:00:01Z")), "older days are irrelevant");
 });
 
 test("time windows inspect all candidates and preserve younger red outcomes", async () => {
