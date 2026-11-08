@@ -15,6 +15,8 @@ scripts/checkout-private-source.sh
 scripts/encrypt-confidential-log.mjs
 scripts/merge-cyclonedx.mjs
 scripts/release-authorization.mjs
+scripts/require-pr-check-workflow.mjs
+scripts/require-pr-check.mjs
 scripts/run-confidential.sh
 scripts/run-indexed-confidential.sh
 scripts/run-package-smoke.ps1

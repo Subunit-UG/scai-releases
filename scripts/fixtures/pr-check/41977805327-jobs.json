@@ -1,0 +1,1085 @@
+{
+  "total_count": 5,
+  "jobs": [
+    {
+      "id": 127080667032,
+      "run_id": 41977805327,
+      "run_attempt": 1,
+      "head_sha": "e4dcd5b30ef2b21dcffdc4c1363509f51929c528",
+      "name": "Exakten Source-Prüfauftrag ohne private Schlüssel validieren",
+      "status": "completed",
+      "conclusion": "success",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Öffentlichen Confidential-Runner auschecken",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Source und Request fail-closed prüfen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Post Öffentlichen Confidential-Runner auschecken",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7
+        }
+      ]
+    },
+    {
+      "id": 127080724709,
+      "run_id": 41977805327,
+      "run_attempt": 1,
+      "head_sha": "e4dcd5b30ef2b21dcffdc4c1363509f51929c528",
+      "name": "SCAI + Trace nativ kompilieren (windows-x64)",
+      "status": "completed",
+      "conclusion": "success",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Öffentlichen Confidential-Runner auschecken",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Quellcode auschecken (privates Repo, read-only Deploy-Key)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Run dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4
+        },
+        {
+          "name": "OpenSSL für Trace-SQLCipher (Windows)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5
+        },
+        {
+          "name": "Privaten Trace-Kern für Cargo freischalten (read-only)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6
+        },
+        {
+          "name": "Exklusive verschlüsselte Diagnoseordner vorbereiten",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7
+        },
+        {
+          "name": "SCAI mit nativer Trace-/Meet-Engine prüfen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8
+        },
+        {
+          "name": "Verschlüsselte native Cargo-Check-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 9
+        },
+        {
+          "name": "Agenten-Hook-Helfer auf Windows testen und starten",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10
+        },
+        {
+          "name": "Verschlüsselte Agenten-Hook-Windows-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 11
+        },
+        {
+          "name": "Eindeutiges Produkt-Binary beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12
+        },
+        {
+          "name": "Verschlüsselte native-product-binary-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 13
+        },
+        {
+          "name": "Native PKCE-Sitzungstests ausführen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14
+        },
+        {
+          "name": "Verschlüsselte native-pkce-tests-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 15
+        },
+        {
+          "name": "Echten OS-Credential-Store beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 16
+        },
+        {
+          "name": "Verschlüsselte native-keyring-smoke-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 17
+        },
+        {
+          "name": "Private Trace-Credentials entfernen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 18
+        },
+        {
+          "name": "Post Öffentlichen Confidential-Runner auschecken",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 36
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 37
+        }
+      ]
+    },
+    {
+      "id": 127080724736,
+      "run_id": 41977805327,
+      "run_attempt": 1,
+      "head_sha": "e4dcd5b30ef2b21dcffdc4c1363509f51929c528",
+      "name": "SCAI + Trace nativ kompilieren (macos-arm64)",
+      "status": "completed",
+      "conclusion": "success",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Öffentlichen Confidential-Runner auschecken",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Quellcode auschecken (privates Repo, read-only Deploy-Key)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Run dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4
+        },
+        {
+          "name": "OpenSSL für Trace-SQLCipher (Windows)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 5
+        },
+        {
+          "name": "Privaten Trace-Kern für Cargo freischalten (read-only)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6
+        },
+        {
+          "name": "Exklusive verschlüsselte Diagnoseordner vorbereiten",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7
+        },
+        {
+          "name": "SCAI mit nativer Trace-/Meet-Engine prüfen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8
+        },
+        {
+          "name": "Verschlüsselte native Cargo-Check-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 9
+        },
+        {
+          "name": "Agenten-Hook-Helfer auf Windows testen und starten",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 10
+        },
+        {
+          "name": "Verschlüsselte Agenten-Hook-Windows-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 11
+        },
+        {
+          "name": "Eindeutiges Produkt-Binary beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12
+        },
+        {
+          "name": "Verschlüsselte native-product-binary-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 13
+        },
+        {
+          "name": "Native PKCE-Sitzungstests ausführen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14
+        },
+        {
+          "name": "Verschlüsselte native-pkce-tests-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 15
+        },
+        {
+          "name": "Echten OS-Credential-Store beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 16
+        },
+        {
+          "name": "Verschlüsselte native-keyring-smoke-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 17
+        },
+        {
+          "name": "Private Trace-Credentials entfernen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 18
+        },
+        {
+          "name": "Post Öffentlichen Confidential-Runner auschecken",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 36
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 37
+        }
+      ]
+    },
+    {
+      "id": 127080724802,
+      "run_id": 41977805327,
+      "run_attempt": 1,
+      "head_sha": "e4dcd5b30ef2b21dcffdc4c1363509f51929c528",
+      "name": "tsc + vite + cargo test",
+      "status": "completed",
+      "conclusion": "success",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Öffentlichen Confidential-Runner auschecken",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Trace-Artefakt-Inputvertrag prüfen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Bun einrichten",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4
+        },
+        {
+          "name": "Rust für compilerführende Frontendtests einrichten",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5
+        },
+        {
+          "name": "Rust-Compiler vor privaten Tests prüfen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6
+        },
+        {
+          "name": "Quellcode auschecken (privates Repo, read-only Deploy-Key)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7
+        },
+        {
+          "name": "Node einrichten",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8
+        },
+        {
+          "name": "Exklusive verschlüsselte Diagnoseordner vorbereiten",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9
+        },
+        {
+          "name": "Abhängigkeiten installieren",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10
+        },
+        {
+          "name": "Verschlüsselte npm-ci-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 11
+        },
+        {
+          "name": "Frontend-Vertragstests ausführen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12
+        },
+        {
+          "name": "Verschlüsselte Frontend-Vertragstest-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 13
+        },
+        {
+          "name": "Web- und Release-Fixture-Verträge prüfen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14
+        },
+        {
+          "name": "Verschlüsselte Web-/Release-Fixture-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 15
+        },
+        {
+          "name": "Plugin-Deploy-Snapshot und Fehlergrenzen prüfen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 16
+        },
+        {
+          "name": "Verschlüsselte plugin-deploy-tests-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 17
+        },
+        {
+          "name": "CLI-Drift-Wächter",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 18
+        },
+        {
+          "name": "Verschlüsselte cli-drift-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 19
+        },
+        {
+          "name": "Release-Meta-Wächter",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 20
+        },
+        {
+          "name": "Verschlüsselte release-meta-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 21
+        },
+        {
+          "name": "Plugin-Bundles bauen (Probe)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 22
+        },
+        {
+          "name": "Verschlüsselte plugin-bundles-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 23
+        },
+        {
+          "name": "Keine Demo-Daten im Produktcode",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 24
+        },
+        {
+          "name": "Verschlüsselte no-demo-data-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 25
+        },
+        {
+          "name": "Bauen (tsc + vite)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 26
+        },
+        {
+          "name": "Verschlüsselte Frontend-Build-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 27
+        },
+        {
+          "name": "Browser für Seh-Harnesse",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 28
+        },
+        {
+          "name": "Verschlüsselte playwright-install-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 29
+        },
+        {
+          "name": "Sicherheitsgrenzen in Browser und Plugin-Bundles beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 30
+        },
+        {
+          "name": "Verschlüsselte browser-security-proof-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 31
+        },
+        {
+          "name": "Optionale Source-Proofs erkennen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 32
+        },
+        {
+          "name": "Subunit Call im Browser einschließlich Aufnahme und Native-Quit-Schutz beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 33
+        },
+        {
+          "name": "Verschlüsselte Subunit-Call-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 34
+        },
+        {
+          "name": "Restored email-full-peek contract beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 35
+        },
+        {
+          "name": "Verschluesselte email-full-peek Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 36
+        },
+        {
+          "name": "Restored backoffice-capacity contract beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 37
+        },
+        {
+          "name": "Verschluesselte backoffice-capacity Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 38
+        },
+        {
+          "name": "Restored agents-os contract beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 39
+        },
+        {
+          "name": "Verschluesselte agents-os Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 40
+        },
+        {
+          "name": "Verschluesselte agents-os Visualbelege bereitstellen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 41
+        },
+        {
+          "name": "Restored workforce-coordination contract beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 42
+        },
+        {
+          "name": "Verschluesselte workforce-coordination Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 43
+        },
+        {
+          "name": "Verschluesselte workforce-coordination Visualbelege bereitstellen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 44
+        },
+        {
+          "name": "Restored migration-host contract beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 45
+        },
+        {
+          "name": "Verschluesselte migration-host Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 46
+        },
+        {
+          "name": "Verschluesselte migration-host Visualbelege bereitstellen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 47
+        },
+        {
+          "name": "Restored radar contract beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 48
+        },
+        {
+          "name": "Verschluesselte radar Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 49
+        },
+        {
+          "name": "Verschluesselte radar Visualbelege bereitstellen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 50
+        },
+        {
+          "name": "Restored native-usage-core contract beweisen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 51
+        },
+        {
+          "name": "Verschluesselte native-usage-core Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 52
+        },
+        {
+          "name": "Revenue-Browser-Abhängigkeiten prüfen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 53
+        },
+        {
+          "name": "Verschlüsselte revenue-proof-dependencies-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 54
+        },
+        {
+          "name": "Billing produktionsnah visuell und interaktiv beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 55
+        },
+        {
+          "name": "Angebote v0.1 visuell und interaktiv beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 56
+        },
+        {
+          "name": "Workgraph Blackbox visuell und interaktiv beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 57
+        },
+        {
+          "name": "MOCO-Paritaetsprotokoll visuell und interaktiv beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 58
+        },
+        {
+          "name": "Verschlüsselte moco-parity-proof-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 59
+        },
+        {
+          "name": "Workforce-Kapazität und Abwesenheit visuell beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 60
+        },
+        {
+          "name": "Verschlüsselte workforce-capacity-proof-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 61
+        },
+        {
+          "name": "Persönliche Workforce-Inbox und Übergaben visuell beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 62
+        },
+        {
+          "name": "Verschlüsselte workforce-inbox-proof-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 63
+        },
+        {
+          "name": "Revenue-Fixture-Screenshots geschlossen prüfen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 64
+        },
+        {
+          "name": "Verschlüsselte revenue-proof-artifacts-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 65
+        },
+        {
+          "name": "Revenue-Browser-Proof-Screenshots verschlüsseln (öffentliches Repo, nie Klartext)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 66
+        },
+        {
+          "name": "Revenue-Browser-Proof-Screenshots (verschlüsselt) sichern",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 67
+        },
+        {
+          "name": "Verschlüsselte Billing-Proof-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 68
+        },
+        {
+          "name": "Verschlüsselte Offers-Proof-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 69
+        },
+        {
+          "name": "Verschlüsselte Workgraph-Proof-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 70
+        },
+        {
+          "name": "Datenschutz-Diagnosepaket visuell und interaktiv beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 71
+        },
+        {
+          "name": "Diagnosepaket-Proof-Screenshots vorhanden",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 72
+        },
+        {
+          "name": "Diagnosepaket-Proof-Screenshots verschlüsseln (öffentliches Repo, nie Klartext)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 73
+        },
+        {
+          "name": "Diagnosepaket-Proof-Screenshots (verschlüsselt) sichern",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 74
+        },
+        {
+          "name": "Verschlüsselte Diagnosepaket-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 75
+        },
+        {
+          "name": "Pages-Versionsverlauf und Restore visuell beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 76
+        },
+        {
+          "name": "Pages-Proof-Screenshots vorhanden",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 77
+        },
+        {
+          "name": "Pages-Proof-Screenshots verschlüsseln (öffentliches Repo, nie Klartext)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 78
+        },
+        {
+          "name": "Pages-Proof-Screenshots (verschlüsselt) sichern",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 79
+        },
+        {
+          "name": "Verschlüsselte Pages-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 80
+        },
+        {
+          "name": "Host-Restore explizit mit WebKit beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 81
+        },
+        {
+          "name": "Verschlüsselte WebKit-Host-Restore-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 82
+        },
+        {
+          "name": "Meet-Plugin visuell und interaktiv beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 83
+        },
+        {
+          "name": "Meet-Proof-Screenshots verschlüsseln (öffentliches Repo, nie Klartext)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 84
+        },
+        {
+          "name": "Meet-Proof-Screenshots (verschlüsselt) sichern",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 85
+        },
+        {
+          "name": "Verschlüsselte Meet-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 86
+        },
+        {
+          "name": "Aenderungsjournal visuell und interaktiv beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 87
+        },
+        {
+          "name": "Aenderungsjournal-Proof-Screenshots verschlüsseln (öffentliches Repo, nie Klartext)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 88
+        },
+        {
+          "name": "Aenderungsjournal-Proof-Screenshots (verschlüsselt) sichern",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 89
+        },
+        {
+          "name": "Verschlüsselte Änderungsjournal-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 90
+        },
+        {
+          "name": "Chat-Dock und lokale Laufzeitgrenze visuell beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 91
+        },
+        {
+          "name": "Chat-Dock-Proof-Screenshots vorhanden",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 92
+        },
+        {
+          "name": "Chat-Dock-Proof-Screenshots verschlüsseln (öffentliches Repo, nie Klartext)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 93
+        },
+        {
+          "name": "Chat-Dock-Proof-Screenshots (verschlüsselt) sichern",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 94
+        },
+        {
+          "name": "Verschlüsselte Chat-Dock-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 95
+        },
+        {
+          "name": "Sentinel CRM 2026 visuell und interaktiv beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 96
+        },
+        {
+          "name": "Sentinel-CRM-Proof-Screenshots vorhanden",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 97
+        },
+        {
+          "name": "Sentinel-CRM-Proof-Screenshots verschlüsseln (öffentliches Repo, nie Klartext)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 98
+        },
+        {
+          "name": "Sentinel-CRM-Proof-Screenshots (verschlüsselt) sichern",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 99
+        },
+        {
+          "name": "Verschlüsselte Sentinel-CRM-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 100
+        },
+        {
+          "name": "Sentinel Forecast Command Desk beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 101
+        },
+        {
+          "name": "Verschlüsselte sentinel-forecast-proof-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 102
+        },
+        {
+          "name": "Sentinel-Forecast-Screenshots vorhanden",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 103
+        },
+        {
+          "name": "Sentinel-Forecast-Screenshots verschlüsseln (öffentliches Repo, nie Klartext)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 104
+        },
+        {
+          "name": "Sentinel-Forecast-Screenshots (verschlüsselt) sichern",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 105
+        },
+        {
+          "name": "Sentinel Lead Ownership und SLA Routing beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 106
+        },
+        {
+          "name": "Sentinel-Routing-Screenshots vorhanden",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 107
+        },
+        {
+          "name": "Sentinel-Routing-Screenshots verschlüsseln (öffentliches Repo, nie Klartext)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 108
+        },
+        {
+          "name": "Sentinel-Routing-Screenshots (verschlüsselt) sichern",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 109
+        },
+        {
+          "name": "Verschlüsselte Sentinel-Routing-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 110
+        },
+        {
+          "name": "Arbeitsbereich mit Tabs und geteilten Flächen im Web beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 111
+        },
+        {
+          "name": "Arbeitsbereich mit App-Modus-Plugins beweisen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 112
+        },
+        {
+          "name": "Verschlüsselte Arbeitsbereich-Tabs-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 113
+        },
+        {
+          "name": "Verschlüsselte Arbeitsbereich-App-Plugins-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 114
+        },
+        {
+          "name": "Arbeitsbereich-Proof-Screenshots geschlossen prüfen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 115
+        },
+        {
+          "name": "Tauri-Systemabhängigkeiten",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 116
+        },
+        {
+          "name": "Privaten Trace-Kern für Cargo freischalten (read-only)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 117
+        },
+        {
+          "name": "cargo test (Sidecar-Trust-Modell + Takoru + verify-Suite)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 118
+        },
+        {
+          "name": "cargo test Agenten-Hook (Helfer + Schwärzungs-Kern)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 119
+        },
+        {
+          "name": "Verschlüsselte Cargo-Test-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 120
+        },
+        {
+          "name": "Verschlüsselte Agenten-Hook-Test-Fehlerdiagnostik bereitstellen",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 121
+        },
+        {
+          "name": "Private Trace-Credentials entfernen",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 122
+        },
+        {
+          "name": "Post Node einrichten",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 242
+        },
+        {
+          "name": "Post Bun einrichten",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 243
+        },
+        {
+          "name": "Post Öffentlichen Confidential-Runner auschecken",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 244
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 245
+        }
+      ]
+    },
+    {
+      "id": 127080726429,
+      "run_id": 41977805327,
+      "run_attempt": 1,
+      "head_sha": "e4dcd5b30ef2b21dcffdc4c1363509f51929c528",
+      "name": "Trace Standalone prüfen (${{ matrix.label }})",
+      "status": "completed",
+      "conclusion": "skipped",
+      "steps": []
+    }
+  ]
+}

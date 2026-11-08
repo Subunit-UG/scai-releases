@@ -79,10 +79,30 @@ jobs:
   release:
     name: Release anlegen
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      actions: read
     outputs:
       tag: ${{ steps.ermitteln.outputs.tag }}
       source_sha: ${{ steps.ermitteln.outputs.source_sha }}
     steps:
+      - name: Require successful tree-equivalent PR check
+        id: pr_check
+        timeout-minutes: 10
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          # Bootstrap from this exact workflow revision, before release secrets.
+          # Only the read-only source key is needed to resolve Git trees.
+          env -u SOURCE_DEPLOY_KEY gh api "repos/$GITHUB_REPOSITORY/contents/scripts/require-pr-check.mjs?ref=$GITHUB_SHA" \
+            --jq .content | base64 --decode > "$RUNNER_TEMP/require-pr-check.mjs"
+          node "$RUNNER_TEMP/require-pr-check.mjs"
+
       - name: Release-Secret-Preflight
         shell: bash
         env:
