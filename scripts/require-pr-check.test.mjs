@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync, mkdtempSync, writeFileSync, readdirSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawnSync, spawn } from "node:child_process";
+import { EventEmitter, once } from "node:events";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { requirePrCheck, sourceFromRun, requireJobs, privateTreeReader, main, REQUIRED_JOBS } from "./require-pr-check.mjs";
-import { validatePrCheckGuard } from "./require-pr-check-workflow.mjs";
+import { requirePrCheck, sourceFromRun, requireJobs, privateTreeReader, main, REQUIRED_JOBS, REQUIRED_PROOFS } from "./require-pr-check.mjs";
+import { validatePrCheckGuard, validatePrCheckPolicy, validateReleaseEnvironments } from "./require-pr-check-workflow.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => readFileSync(join(ROOT, file), "utf8");
@@ -14,6 +15,14 @@ const fixture = (name) => JSON.parse(read(`scripts/fixtures/pr-check/${name}.jso
 const GREEN = "d35c559238029a8b85dc94c2823919274d3ec518";
 const UNCHECKED = "574c116982669ccf7945653385595e4db62e4917";
 const NOW = new Date("2026-11-08T12:00:00Z");
+
+function runPage(path, runs) {
+  const query = new URL(`https://fixture.invalid/${path}`).searchParams;
+  const [start, end] = query.get("created").split("..").map(Date.parse);
+  const window = runs.filter((run) => Date.parse(run.created_at) >= start && Date.parse(run.created_at) <= end);
+  const page = Number(query.get("page"));
+  return { total_count: window.length, workflow_runs: structuredClone(window.slice((page - 1) * 100, page * 100)) };
+}
 
 function harness() {
   const run = fixture("41977805327-run");
@@ -24,7 +33,7 @@ function harness() {
   state.api = async (path) => {
     state.calls.push(path);
     if (path.endsWith("/actions/workflows/pr-check.yml")) return state.workflow;
-    if (path.includes("/runs?")) return { total_count: state.runs.length, workflow_runs: state.runs };
+    if (path.includes("/runs?")) return runPage(path, state.runs);
     if (path.includes("/jobs?")) return { total_count: state.jobs.length, jobs: state.jobs };
     const id = /\/runs\/([0-9]+)$/.exec(path)?.[1];
     if (id) return state.runs.find((item) => item.id === Number(id));
@@ -51,7 +60,7 @@ test("recorded successful PR check approves d35c5592 and its mandatory jobs", as
   assert.equal(proof.runId, 41977805327);
   assert.equal(proof.tree, h.trees[GREEN]);
   assert.ok(h.calls.some((path) => path.includes("/attempts/1/jobs?")));
-  assert.ok(h.calls[1].includes("created=%3E%3D2026-10-09"));
+  assert.ok(h.calls.some((path) => path.includes("2026-10-09T12%3A00%3A00.000Z")));
 });
 
 test("recorded build success is not a PR check and cannot approve 574c1169", async () => {
@@ -245,6 +254,38 @@ test("pending runs are ignored while the latest completed evidence is checked", 
   }
 });
 
+test("candidate refresh rejects a younger run completing during verification", async () => {
+  for (const conclusion of ["failure", "success", "cancelled"]) {
+    for (const during of ["tree", "jobs"]) {
+      const h = harness();
+      const younger = { ...h.run, id: h.run.id + 1, status: "in_progress", conclusion: null,
+        display_title: h.run.display_title.replace(GREEN, UNCHECKED) };
+      h.trees[UNCHECKED] = h.trees[GREEN];
+      h.runs.push(younger);
+      const finish = () => { younger.status = "completed"; younger.conclusion = conclusion; };
+      await assert.rejects(requirePrCheck({ sourceSha: GREEN, now: NOW,
+        api: async (path) => { if (during === "jobs" && path.includes("/jobs?")) finish(); return h.api(path); },
+        treeFor: async (sha) => { if (during === "tree") finish(); return h.trees[sha]; },
+        prefetchTrees: async () => {},
+      }), /candidate selection changed/);
+    }
+  }
+});
+
+test("candidate refresh uses the current upper time bound for newly created runs", async () => {
+  const h = harness();
+  let elapsed = 0;
+  await assert.rejects(requirePrCheck({ sourceSha: GREEN, now: NOW, clock: () => elapsed,
+    api: async (path) => {
+      if (path.includes("/jobs?")) {
+        elapsed = 2000;
+        h.runs.push({ ...h.run, id: h.run.id + 1, created_at: "2026-11-08T12:00:01Z", conclusion: "failure" });
+      }
+      return h.api(path);
+    }, treeFor: async (sha) => h.trees[sha],
+  }), /candidate selection changed/);
+});
+
 test("newest green run still requires its own mandatory jobs", async () => {
   const h = harness();
   const newest = { ...h.run, id: h.run.id + 1 };
@@ -289,15 +330,58 @@ test("batch failures or invalid checked trees never fall back to older evidence"
 test("pagination follows a second run page instead of selecting the first page", async () => {
   const h = harness();
   const first = Array.from({ length: 100 }, (_, index) => ({ ...h.run, id: index + 1, conclusion: "failure" }));
-  const proof = await h.verify(GREEN, async (path) => path.includes("/runs?")
-    ? { total_count: 101, workflow_runs: path.endsWith("page=1") ? first : [h.run] }
-    : h.api(path));
+  h.runs = [...first, h.run];
+  const proof = await h.verify();
   assert.equal(proof.runId, h.run.id);
+  assert.ok(h.calls.some((path) => path.includes("/runs?") && path.endsWith("page=2")));
+});
+
+test("time-window search approves fresh exact evidence beyond 1000 runs", async () => {
+  const h = harness();
+  const older = Array.from({ length: 1100 }, (_, index) => ({ ...h.run, id: index + 1,
+    created_at: new Date(Date.parse("2026-11-08T00:00:00Z") + index * 1000).toISOString(),
+    conclusion: "failure", display_title: h.run.display_title.replace(GREEN, UNCHECKED) }));
+  h.run.created_at = "2026-11-08T11:59:59Z";
+  h.runs = [...older, h.run];
+  assert.equal((await h.verify()).runId, h.run.id);
+  assert.deepEqual(h.treeCalls, [GREEN]);
+  assert.deepEqual(h.batches, []);
+  assert.ok(h.calls.some((path) => path.includes("/runs?") && path.endsWith("page=6")), "subwindows must be fully paginated");
+  const ranges = h.calls.filter((path) => path.includes("/runs?")).map((path) => new URL(`https://fixture.invalid/${path}`).searchParams.get("created"));
+  assert.ok(new Set(ranges).size > 31, "the saturated day must be subdivided");
+});
+
+test("time windows inspect all candidates and preserve younger red outcomes", async () => {
+  const h = harness();
+  h.runs.push(...Array.from({ length: 1001 }, (_, index) => ({ ...h.run, id: index + 1,
+    created_at: new Date(Date.parse("2026-11-07T00:00:00Z") + index * 1000).toISOString(),
+    display_title: h.run.display_title.replace(GREEN, UNCHECKED) })));
+  h.runs.push({ ...h.run, id: h.run.id + 1, created_at: "2026-11-08T11:59:59Z", conclusion: "failure" });
+  await assert.rejects(h.verify(), /Latest tree-equivalent PR check is unsuccessful/);
+});
+
+test("saturated one-second windows fail with an explicit recovery message", async () => {
+  const h = harness();
+  h.runs = Array.from({ length: 1001 }, (_, index) => ({ ...h.run, id: index + 1 }));
+  await assert.rejects(h.verify(), /search window saturated at one second; retry/);
+});
+
+test("verification has a time budget instead of a total run-count ceiling", async () => {
+  const h = harness();
+  let elapsed = 0;
+  const timeouts = [];
+  await assert.rejects(requirePrCheck({ sourceSha: GREEN, now: NOW, clock: () => elapsed,
+    api: async (path, options) => {
+      timeouts.push(options.timeout);
+      elapsed += 50000;
+      return h.api(path);
+    }, treeFor: async (sha) => h.trees[sha],
+  }), /240-second resource budget; retry/);
+  assert.deepEqual(timeouts, [60000, 60000, 60000, 60000, 40000]);
 });
 
 test("pagination rejects overflow, incomplete pages, duplicate IDs and changing totals", async () => {
   for (const data of [
-    { total_count: 1001, workflow_runs: [] },
     { total_count: 2, workflow_runs: [harness().run] },
     { total_count: 2, workflow_runs: [harness().run, harness().run] },
     { total_count: "1", workflow_runs: [harness().run] },
@@ -355,6 +439,79 @@ test("publication rechecks PR CI for manifest source before draft access", () =>
   assert.ok(validatePrCheckGuard(missing, "publish").length > 0);
 });
 
+test("direct updater publication immediately rechecks the same source", () => {
+  assert.deepEqual(validatePrCheckGuard(build, "manifest"), []);
+  const start = build.indexOf("      - name: Require successful tree-equivalent PR check", build.indexOf("  manifest:\n"));
+  for (const [before, after] of [
+    ["      - name: Require successful tree-equivalent PR check", "      - name: Removed guard"],
+    ["SOURCE_SHA: ${{ needs.release.outputs.source_sha }}", "SOURCE_SHA: arbitrary"],
+    ["if: inputs.publish_update", "if: false"],
+    ["run: node scripts/require-pr-check.mjs", "run: true"],
+  ]) {
+    const mutant = build.slice(0, start) + build.slice(start).replace(before, after);
+    assert.notDeepEqual(validatePrCheckGuard(mutant, "manifest"), [], before);
+  }
+});
+
+test("signing and publication jobs use the protected release environment", () => {
+  const required = {
+    "build-all.yml": ["release", "build", "manifest"],
+    "publish-approved.yml": ["publish"],
+  };
+  for (const filename of readdirSync(join(ROOT, ".github/workflows")).filter((name) => /\.ya?ml$/.test(name))) {
+    const workflow = read(`.github/workflows/${filename}`);
+    assert.deepEqual(validateReleaseEnvironments(workflow), [], filename);
+    for (const job of required[filename] ?? []) {
+      const section = workflow.match(new RegExp(`^  ${job}:\\n[\\s\\S]*?(?=^  [a-zA-Z0-9_-]+:|$(?![\\s\\S]))`, "m"))?.[0];
+      assert.match(section ?? "", /^    environment: release$/m, `${filename}:${job}`);
+    }
+    // Every protected job must detect removal or substitution of its binding.
+    for (const match of workflow.matchAll(/^    environment: release\n/gm)) {
+      for (const replacement of ["", "    environment: arbitrary\n"]) {
+        const mutant = workflow.slice(0, match.index) + replacement + workflow.slice(match.index + match[0].length);
+        const sensitive = validateReleaseEnvironments(mutant);
+        const guard = (required[filename] ?? []).flatMap((job) => validatePrCheckGuard(mutant, job));
+        assert.ok(sensitive.length + guard.length > 0, `${filename}:${match.index}`);
+      }
+    }
+  }
+});
+
+test("bootstrap decoder does not inherit the source key or Actions tokens", () => {
+  assert.match(build, /\| env -u SOURCE_DEPLOY_KEY -u GH_TOKEN -u GITHUB_TOKEN base64 --decode/);
+  assert.notDeepEqual(validatePrCheckGuard(build.replace("env -u SOURCE_DEPLOY_KEY -u GH_TOKEN -u GITHUB_TOKEN base64", "base64"), "release"), []);
+  const dir = mkdtempSync(join(tmpdir(), "pr-bootstrap-test-"));
+  try {
+    const bin = join(dir, "bin"); mkdirSync(bin);
+    const script = (name, code) => writeFileSync(join(bin, name), `#!${process.execPath}\n${code}`, { mode: 0o755 });
+    script("gh", `
+      if (process.env.SOURCE_DEPLOY_KEY || !process.env.GH_TOKEN) process.exit(42);
+      console.log(Buffer.from('console.log("fixture-bootstrap-pass")').toString('base64'));
+    `);
+    script("base64", `
+      if (process.env.SOURCE_DEPLOY_KEY || process.env.GH_TOKEN || process.env.GITHUB_TOKEN) process.exit(43);
+      process.stdout.write(Buffer.from(require('node:fs').readFileSync(0,'utf8').trim(),'base64'));
+    `);
+    const guard = build.split(/(?=^      - )/m).find((step) => step.startsWith("      - name: Require successful tree-equivalent PR check\n"));
+    const shell = guard.split("        run: |\n")[1].split("\n").map((line) => line.replace(/^          /, "")).join("\n");
+    const result = spawnSync("bash", ["-c", shell], { encoding: "utf8", env: {
+      ...process.env, PATH: `${bin}:${process.env.PATH}`, RUNNER_TEMP: dir,
+      GITHUB_REF: "refs/heads/main", GITHUB_REPOSITORY: "Subunit-UG/scai-releases", GITHUB_SHA: "a".repeat(40),
+      SOURCE_DEPLOY_KEY: "fixture-key", GH_TOKEN: "fixture-token", GITHUB_TOKEN: "fixture-token",
+    } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), "fixture-bootstrap-pass");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("every PR guard has independent unconditional temporary-directory cleanup", () => {
+  for (const [workflow, job] of [[build, "release"], [build, "manifest"], [publish, "publish"]]) {
+    assert.deepEqual(validatePrCheckGuard(workflow, job), []);
+    const mutant = workflow.replaceAll('run: rm -rf -- "$RUNNER_TEMP/required-pr-check"', "run: true");
+    assert.notDeepEqual(validatePrCheckGuard(mutant, job), []);
+  }
+});
+
 test("workflow guard rejects bypass, source substitution and mutable bootstrap", () => {
   for (const [before, after] of [
     ["id: pr_check", "id: pr_check\n        if: false"],
@@ -370,14 +527,23 @@ test("workflow guard rejects bypass, source substitution and mutable bootstrap",
 
 test("mandatory job policy matches the workflow and unconditional browser proofs", () => {
   const workflow = read(".github/workflows/pr-check.yml");
-  for (const name of REQUIRED_JOBS.slice(0, 2)) assert.ok(workflow.includes(`name: ${name}\n`));
-  const native = workflow.match(/^  native-trace:\n[\s\S]*?(?=^  [a-z-]+:|$(?![\s\S]))/m)?.[0] ?? "";
-  assert.deepEqual([...native.matchAll(/label: ([a-z0-9-]+)/g)].map((m) => m[1]).sort(), ["macos-arm64", "windows-x64"]);
-  for (const name of ["Host-Restore explizit mit WebKit beweisen", "Meet-Plugin visuell und interaktiv beweisen"]) {
-    const step = workflow.split(/(?=^      - name:)/m).find((s) => s.startsWith(`      - name: ${name}\n`));
-    assert.ok(step); assert.doesNotMatch(step, /^        (?:if|continue-on-error):/m);
+  assert.deepEqual(validatePrCheckPolicy(workflow), []);
+  for (const [before, after] of [
+    [REQUIRED_JOBS[0], "Renamed preflight"], [REQUIRED_JOBS[1], "Renamed checks"],
+    ["SCAI + Trace nativ kompilieren", "Renamed native build"],
+    ["Trace Standalone prüfen", "Renamed Trace check"],
+    ...REQUIRED_PROOFS.map((proof) => [proof, `Renamed ${proof}`]),
+  ]) {
+    const prefix = REQUIRED_PROOFS.includes(before) ? "      - name: " : "    name: ";
+    const needle = `${prefix}${before}`;
+    assert.ok(workflow.includes(needle));
+    assert.notDeepEqual(validatePrCheckPolicy(workflow.replace(needle, `${prefix}${after}`)), [], before);
   }
-  assert.match(workflow, /if: inputs\.trace_ref != '' && needs\.preflight\.result == 'success'/);
+  // Mutate every matrix label individually, including repeated native labels.
+  for (const match of workflow.matchAll(/^            label: (.+)$/gm)) {
+    const changed = workflow.slice(0, match.index) + match[0].replace(match[1], "renamed-label") + workflow.slice(match.index + match[0].length);
+    assert.notDeepEqual(validatePrCheckPolicy(changed), [], match[1]);
+  }
 });
 
 test("tree reader compares real Git trees without private checkout or credential inheritance", () => {
@@ -451,4 +617,56 @@ test("tree reader enforces its time and batch-size budgets without network acces
     assert.deepEqual(timeouts, [60000, 60000, 20000]);
     assert.equal(readdirSync(dir).length, 0, "temporary credentials removed on failure");
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("tree reader removes credentials and signal listeners on cancellation", () => {
+  for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143], ["SIGHUP", 129]]) {
+    const dir = mkdtempSync(join(tmpdir(), "pr-tree-signal-"));
+    const signals = new EventEmitter();
+    const exits = [];
+    const reader = privateTreeReader({ RUNNER_TEMP: dir, SOURCE_DEPLOY_KEY: "fixture-key" }, {
+      signals, exit: (value) => exits.push(value),
+      runCommand: (program, args) => program === "ssh-keyscan" ? "github.com ssh-ed25519 fixture"
+        : program === "ssh-keygen" ? "256 SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU github.com"
+        : args.at(-1) === `${GREEN}^{commit}` ? GREEN : "a".repeat(40),
+    });
+    try {
+      reader.treeFor(GREEN);
+      assert.equal(readdirSync(dir).length, 1);
+      signals.emit(signal);
+      assert.deepEqual(exits, [code]);
+      assert.equal(readdirSync(dir).length, 0);
+      for (const name of ["SIGINT", "SIGTERM", "SIGHUP"]) assert.equal(signals.listenerCount(name), 0);
+    } finally { reader.close(); rmSync(dir, { recursive: true, force: true }); }
+  }
+});
+
+test("real signal cancellation removes the temporary key before process exit", { timeout: 10000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pr-tree-real-signal-"));
+  const child = spawn(process.execPath, ["--input-type=module", "-e", `
+    import { privateTreeReader } from ${JSON.stringify(new URL("./require-pr-check.mjs", import.meta.url).href)};
+    const sha = ${JSON.stringify(GREEN)};
+    const reader = privateTreeReader({ RUNNER_TEMP: ${JSON.stringify(dir)}, SOURCE_DEPLOY_KEY: "fixture-key" }, {
+      runCommand: (program, args) => program === "ssh-keyscan" ? "github.com ssh-ed25519 fixture"
+        : program === "ssh-keygen" ? "256 SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU github.com"
+        : args.at(-1) === sha + "^{commit}" ? sha : "a".repeat(40),
+    });
+    reader.treeFor(sha);
+    console.log("ready");
+    setInterval(() => {}, 1000);
+  `], { stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    const [data] = await once(child.stdout, "data");
+    assert.equal(data.toString().trim(), "ready");
+    assert.equal(readdirSync(dir).length, 1);
+    const exited = once(child, "exit");
+    child.kill("SIGTERM");
+    const [code, signal] = await exited;
+    assert.equal(code, 143);
+    assert.equal(signal, null);
+    assert.equal(readdirSync(dir).length, 0);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

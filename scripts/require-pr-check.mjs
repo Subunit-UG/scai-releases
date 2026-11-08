@@ -2,7 +2,7 @@
 // A successful run belongs to the public workflow repository. Its title binds
 // the private source; its head_sha does not. Squash merges must match by tree.
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync, appendFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -13,6 +13,7 @@ const REPO = "Subunit-UG/scai-releases";
 const WORKFLOW = ".github/workflows/pr-check.yml";
 const PAGE_SIZE = 100;
 const MAX_PAGES = 10;
+const VERIFICATION_BUDGET_MS = 240000;
 // Expired evidence requires a fresh PR check, never an unbounded API scan.
 export const LOOKBACK_DAYS = 30;
 const MAX_TREE_FETCHES = 2;
@@ -23,13 +24,13 @@ export const REQUIRED_JOBS = [
   "SCAI + Trace nativ kompilieren (macos-arm64)",
   "SCAI + Trace nativ kompilieren (windows-x64)",
 ];
-const REQUIRED_PROOFS = [
+export const REQUIRED_PROOFS = [
   "Host-Restore explizit mit WebKit beweisen",
   "Meet-Plugin visuell und interaktiv beweisen",
 ];
-const OPTIONAL_TRACE = ["linux-core", "macos-arm64", "macos-x64", "windows-x64"]
+export const OPTIONAL_TRACE = ["linux-core", "macos-arm64", "macos-x64", "windows-x64"]
   .map((label) => `Trace Standalone prüfen (${label})`);
-const SKIPPED_TRACE = "Trace Standalone prüfen (${{ matrix.label }})";
+export const SKIPPED_TRACE = "Trace Standalone prüfen (${{ matrix.label }})";
 const fail = (message) => { throw new Error(message); };
 const positive = (n) => Number.isSafeInteger(n) && n > 0;
 const success = (value) => value?.status === "completed" && value.conclusion === "success";
@@ -43,12 +44,13 @@ export function sourceFromRun(run, workflowId) {
 }
 
 // Read all pages or fail. Never accept a partial result or silently truncate it.
-async function pages(api, path, field) {
+async function pages(api, path, field, firstPage) {
   const values = [];
   const seen = new Set();
   let total;
   for (let page = 1; page <= MAX_PAGES; page++) {
-    const data = await api(`${path}${path.includes("?") ? "&" : "?"}per_page=${PAGE_SIZE}&page=${page}`);
+    const data = page === 1 && firstPage ? firstPage
+      : await api(`${path}${path.includes("?") ? "&" : "?"}per_page=${PAGE_SIZE}&page=${page}`);
     if (!Number.isSafeInteger(data?.total_count) || data.total_count < 0
         || !Array.isArray(data[field]) || data[field].length > PAGE_SIZE) fail("Invalid paginated Actions response");
     total ??= data.total_count;
@@ -62,6 +64,40 @@ async function pages(api, path, field) {
     if (values.length > total || data[field].length < PAGE_SIZE) fail("Incomplete Actions pagination");
   }
   fail("Actions pagination exhausted");
+}
+
+// The Actions search cap is per query, not a limit on valid release evidence.
+// Fully paginate disjoint daily windows; subdivide saturated windows down to
+// seconds. Even exactly 1000 may be a truncated response, so split it too.
+async function runWindows(api, workflowId, since, through) {
+  const runs = [];
+  const seen = new Set();
+  const window = async (start, end) => {
+    const range = `${new Date(start * 1000).toISOString()}..${new Date(end * 1000).toISOString()}`;
+    const path = `repos/${REPO}/actions/workflows/${workflowId}/runs?event=workflow_dispatch&branch=main&created=${encodeURIComponent(range)}`;
+    const first = await api(`${path}&per_page=${PAGE_SIZE}&page=1`);
+    if (!Number.isSafeInteger(first?.total_count) || first.total_count < 0
+        || !Array.isArray(first.workflow_runs) || first.workflow_runs.length > PAGE_SIZE) fail("Invalid paginated Actions response");
+    if (first.total_count >= PAGE_SIZE * MAX_PAGES) {
+      if (start === end) fail("PR-check search window saturated at one second; retry after Actions activity settles or contact release maintainers");
+      const middle = Math.floor((start + end) / 2);
+      await window(middle + 1, end);
+      await window(start, middle);
+      return;
+    }
+    for (const run of await pages(api, path, "workflow_runs", first)) {
+      if (seen.has(run.id)) fail("Duplicate Actions identity across search windows");
+      seen.add(run.id);
+      runs.push(run);
+    }
+  };
+  const lower = Math.floor(since / 1000);
+  for (let end = Math.floor(through / 1000); end >= lower;) {
+    const start = Math.max(lower, end - 86400 + 1);
+    await window(start, end);
+    end = start - 1;
+  }
+  return runs;
 }
 
 export function requireJobs(jobs, run) {
@@ -87,50 +123,81 @@ export function requireJobs(jobs, run) {
   }
 }
 
-export async function requirePrCheck({ api, sourceSha, treeFor, prefetchTrees, now = new Date() }) {
+export async function requirePrCheck({ api, sourceSha, treeFor, prefetchTrees, now = new Date(), clock = Date.now }) {
   if (!SHA.test(sourceSha ?? "")) fail("Exact lowercase source SHA required");
-  const workflow = await api(`repos/${REPO}/actions/workflows/pr-check.yml`);
+  const started = clock();
+  const budget = () => {
+    const remaining = VERIFICATION_BUDGET_MS - (clock() - started);
+    if (remaining <= 0) fail("PR-check verification exceeded the 240-second resource budget; retry after Actions activity settles or contact release maintainers");
+    return remaining;
+  };
+  const request = async (path) => {
+    const value = await api(path, { timeout: Math.min(60000, budget()) });
+    budget();
+    return value;
+  };
+  const workflow = await request(`repos/${REPO}/actions/workflows/pr-check.yml`);
   if (!positive(workflow?.id) || workflow.path !== WORKFLOW || workflow.state !== "active") fail("Invalid PR-check workflow identity");
-  const since = new Date(now.getTime() - LOOKBACK_DAYS * 86400000).toISOString();
-  const runs = await pages(api,
-    `repos/${REPO}/actions/workflows/${workflow.id}/runs?event=workflow_dispatch&branch=main&created=${encodeURIComponent(`>=${since}`)}`,
-    "workflow_runs");
-  // Only completed outcomes participate. A pending run is not evidence; a
-  // retry of the selected run is still rejected by the snapshot checks below.
-  const candidates = runs.filter((run) => sourceFromRun(run, workflow.id) && run.status === "completed"
-    && Number.isFinite(Date.parse(run.created_at)) && Date.parse(run.created_at) >= Date.parse(since)
-    && Date.parse(run.created_at) <= now.getTime())
-    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id);
-  if (candidates.length === 0) fail("No completed PR check in the bounded search");
-  const sourceTree = await treeFor(sourceSha);
-  if (!SHA.test(sourceTree ?? "")) fail("Invalid source tree");
-  // An exact SHA already proves tree equality and bounds the search: older
-  // runs cannot win. Newer non-exact SHAs must still be checked, even if red.
-  const exact = candidates.findIndex((run) => sourceFromRun(run, workflow.id) === sourceSha);
-  const relevant = exact < 0 ? candidates : candidates.slice(0, exact + 1);
-  const otherShas = [...new Set(relevant.map((run) => sourceFromRun(run, workflow.id)))]
-    .filter((sha) => sha !== sourceSha);
-  if (otherShas.length) {
-    if (typeof prefetchTrees !== "function") fail("Batched tree reader required");
-    await prefetchTrees(otherShas);
-  }
-  const matching = [];
-  for (const run of relevant) {
-    const checkedSha = sourceFromRun(run, workflow.id);
-    const checkedTree = checkedSha === sourceSha ? sourceTree : await treeFor(checkedSha);
-    if (!SHA.test(checkedTree ?? "")) fail("Invalid checked tree");
-    if (checkedTree === sourceTree) matching.push({ run, checkedSha });
-  }
-  if (matching.length === 0) fail("No tree-equivalent completed PR check");
-  const { run, checkedSha } = matching[0];
+  const since = now.getTime() - LOOKBACK_DAYS * 86400000;
+  const trees = new Map();
+  let sourceTree;
+  const select = async () => {
+    budget();
+    const through = now.getTime() + (clock() - started);
+    const runs = await runWindows(request, workflow.id, since, through);
+    // Only completed outcomes participate. A pending run is not evidence; a
+    // retry of the selected run is still rejected by the snapshot checks below.
+    const candidates = runs.filter((run) => sourceFromRun(run, workflow.id) && run.status === "completed"
+      && Number.isFinite(Date.parse(run.created_at)) && Date.parse(run.created_at) >= since
+      && Date.parse(run.created_at) <= through)
+      .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id);
+    if (candidates.length === 0) fail("No completed PR check in the bounded search");
+    if (!sourceTree) {
+      sourceTree = await treeFor(sourceSha);
+      if (!SHA.test(sourceTree ?? "")) fail("Invalid source tree");
+      trees.set(sourceSha, sourceTree);
+    }
+    // An exact SHA already proves tree equality and bounds the search: older
+    // runs cannot win. Newer non-exact SHAs must still be checked, even if red.
+    const exact = candidates.findIndex((run) => sourceFromRun(run, workflow.id) === sourceSha);
+    const relevant = exact < 0 ? candidates : candidates.slice(0, exact + 1);
+    const otherShas = [...new Set(relevant.map((run) => sourceFromRun(run, workflow.id)))]
+      .filter((sha) => !trees.has(sha));
+    if (otherShas.length) {
+      if (typeof prefetchTrees !== "function") fail("Batched tree reader required");
+      await prefetchTrees(otherShas);
+      for (const sha of otherShas) {
+        const tree = await treeFor(sha);
+        if (!SHA.test(tree ?? "")) fail("Invalid checked tree");
+        trees.set(sha, tree);
+      }
+    }
+    const matching = [];
+    for (const run of relevant) {
+      const checkedSha = sourceFromRun(run, workflow.id);
+      const checkedTree = trees.get(checkedSha);
+      if (!SHA.test(checkedTree ?? "")) fail("Invalid checked tree");
+      if (checkedTree === sourceTree) matching.push({ run, checkedSha });
+    }
+    if (matching.length === 0) fail("No tree-equivalent completed PR check");
+    budget();
+    return matching[0];
+  };
+  const { run, checkedSha } = await select();
   if (!success(run)) fail("Latest tree-equivalent PR check is unsuccessful");
-  const fresh = await api(`repos/${REPO}/actions/runs/${run.id}`);
+  const fresh = await request(`repos/${REPO}/actions/runs/${run.id}`);
   if (sourceFromRun(fresh, workflow.id) !== checkedSha || !success(fresh)
       || fresh.id !== run.id || fresh.run_attempt !== run.run_attempt || fresh.head_sha !== run.head_sha) fail("PR-check run changed");
-  const jobs = await pages(api, `repos/${REPO}/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs`, "jobs");
+  const jobs = await pages(request, `repos/${REPO}/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs`, "jobs");
   requireJobs(jobs, fresh);
+  // Re-read all candidates: a younger pending run may have completed while
+  // tree objects or jobs were being verified. Never approve the old selection.
+  const latest = await select();
+  if (latest.run.id !== run.id || latest.checkedSha !== checkedSha || !success(latest.run)
+      || latest.run.run_attempt !== run.run_attempt || latest.run.head_sha !== run.head_sha
+      || latest.run.created_at !== run.created_at) fail("PR-check candidate selection changed during verification");
   // A concurrent rerun invalidates the snapshot instead of mixing attempts.
-  const final = await api(`repos/${REPO}/actions/runs/${run.id}`);
+  const final = await request(`repos/${REPO}/actions/runs/${run.id}`);
   if (sourceFromRun(final, workflow.id) !== checkedSha || !success(final)
       || final.id !== run.id || final.run_attempt !== run.run_attempt || final.head_sha !== run.head_sha) fail("PR-check run changed during verification");
   return { runId: run.id, attempt: run.run_attempt, checkedSha, sourceSha, tree: sourceTree };
@@ -144,12 +211,18 @@ function command(program, args, options = {}) {
   return result.stdout.trim();
 }
 
-export function privateTreeReader(env, { runCommand = command, clock = Date.now } = {}) {
+export function privateTreeReader(env, { runCommand = command, clock = Date.now, signals = process, exit = (code) => process.exit(code) } = {}) {
   let directory;
   let childEnv;
   let deadline;
   let fetches = 0;
   const cache = new Map();
+  const handlers = new Map();
+  const close = () => {
+    if (directory) rmSync(directory, { recursive: true, force: true });
+    for (const [signal, handler] of handlers) signals.removeListener(signal, handler);
+    handlers.clear();
+  };
   const execute = (program, args) => {
     deadline ??= clock() + TREE_BUDGET_MS;
     const remaining = deadline - clock();
@@ -166,7 +239,14 @@ export function privateTreeReader(env, { runCommand = command, clock = Date.now 
     if (fetches >= MAX_TREE_FETCHES) fail("PR-check tree fetch limit exceeded (maximum 2 batches)");
     if (!directory) {
       if (!env.SOURCE_DEPLOY_KEY) fail("Read-only source deploy key is required");
-      directory = mkdtempSync(join(env.RUNNER_TEMP || tmpdir(), "scai-pr-check-"));
+      const base = env.PR_CHECK_TEMP || env.RUNNER_TEMP || tmpdir();
+      if (env.PR_CHECK_TEMP) mkdirSync(base, { recursive: true, mode: 0o700 });
+      directory = mkdtempSync(join(base, "scai-pr-check-"));
+      for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143], ["SIGHUP", 129]]) {
+        const handler = () => { try { close(); } finally { exit(code); } };
+        handlers.set(signal, handler);
+        signals.once(signal, handler);
+      }
       const key = join(directory, "key");
       const hosts = join(directory, "known_hosts");
       writeFileSync(key, `${env.SOURCE_DEPLOY_KEY}\n`, { mode: 0o600 });
@@ -202,7 +282,7 @@ export function privateTreeReader(env, { runCommand = command, clock = Date.now 
       prefetch([sha]);
       return cache.get(sha);
     },
-    close() { if (directory) rmSync(directory, { recursive: true, force: true }); },
+    close,
   };
 }
 
@@ -211,8 +291,8 @@ export async function main(env = process.env) {
   if (!env.GH_TOKEN) fail("Actions read token required");
   const childEnv = { ...env };
   delete childEnv.SOURCE_DEPLOY_KEY;
-  const api = async (path) => {
-    const response = command("gh", ["api", "--method", "GET", path], { env: childEnv });
+  const api = async (path, options) => {
+    const response = command("gh", ["api", "--method", "GET", path], { env: childEnv, ...options });
     try { return JSON.parse(response); } catch { fail("Invalid Actions JSON"); }
   };
   const reader = privateTreeReader(env);

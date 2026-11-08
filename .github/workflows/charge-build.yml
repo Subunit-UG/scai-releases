@@ -29,6 +29,7 @@ concurrency:
 
 jobs:
   build:
+    environment: release
     name: Subunit Charge bauen und signieren
     runs-on: macos-latest
     timeout-minutes: 30

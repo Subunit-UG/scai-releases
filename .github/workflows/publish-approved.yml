@@ -31,6 +31,7 @@ concurrency:
 
 jobs:
   publish:
+    environment: release
     name: Fleet-PASS prüfen und Draft veröffentlichen
     runs-on: ubuntu-22.04
     permissions:
@@ -93,6 +94,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ steps.gate.outputs.source_sha }}
           SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          PR_CHECK_TEMP: ${{ runner.temp }}/required-pr-check
         run: node scripts/require-pr-check.mjs
 
       - name: Draft, Bindung und sämtliche Asset-Digests verifizieren
@@ -156,3 +158,8 @@ jobs:
           gh release edit "$TAG" -R "$REPO" "${FLAGS[@]}"
           gh release view "$TAG" -R "$REPO" --json isDraft,isPrerelease,assets \
             --jq '{draft:.isDraft, prerelease:.isPrerelease, assets:(.assets|length)}'
+
+      - name: Remove PR-check temporary credentials
+        if: always()
+        shell: bash
+        run: rm -rf -- "$RUNNER_TEMP/required-pr-check"

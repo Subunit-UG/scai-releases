@@ -77,6 +77,7 @@ jobs:
   # Verwandt, aber nicht dasselbe: das latest.json-Merge-Race weiter unten (Job `manifest`).
   # Beide Rennen entstehen daraus, dass die Matrix-Jobs sich EIN Release teilen.
   release:
+    environment: release
     name: Release anlegen
     runs-on: ubuntu-22.04
     permissions:
@@ -94,14 +95,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          PR_CHECK_TEMP: ${{ runner.temp }}/required-pr-check
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = "refs/heads/main"
           # Bootstrap from this exact workflow revision, before release secrets.
           # Only the read-only source key is needed to resolve Git trees.
           env -u SOURCE_DEPLOY_KEY gh api "repos/$GITHUB_REPOSITORY/contents/scripts/require-pr-check.mjs?ref=$GITHUB_SHA" \
-            --jq .content | base64 --decode > "$RUNNER_TEMP/require-pr-check.mjs"
+            --jq .content | env -u SOURCE_DEPLOY_KEY -u GH_TOKEN -u GITHUB_TOKEN base64 --decode > "$RUNNER_TEMP/require-pr-check.mjs"
           node "$RUNNER_TEMP/require-pr-check.mjs"
+
+      - name: Remove PR-check temporary credentials
+        if: always()
+        shell: bash
+        run: rm -rf -- "$RUNNER_TEMP/required-pr-check"
 
       - name: Release-Secret-Preflight
         shell: bash
@@ -325,6 +332,7 @@ jobs:
           echo "Draft $TAG angelegt — öffentlich wird er erst nach allen Gates."
 
   build:
+    environment: release
     name: ${{ matrix.label }}
     needs: release
     # Tauri signs during bundling in this job. No OIDC access for release creation.
@@ -1147,6 +1155,7 @@ jobs:
   # kann kein paralleler Plattform-Job einen bereits geschriebenen Eintrag verlieren
   # (historisch fehlte bei v0.58.0 windows-aarch64 trotz fertigem Asset).
   manifest:
+    environment: release
     name: Signaturen, SBOM und Provenance im Draft
     needs: [release, build]
     if: ${{ always() && needs.release.result == 'success' && needs.build.result == 'success' }}
@@ -1155,6 +1164,7 @@ jobs:
       contents: write
       id-token: write # kurzlebige Sigstore-Identität für GitHub Artifact Attestations
       attestations: write
+      actions: read
     steps:
       - name: Release-Evidence-Werkzeuge auschecken
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2, immutable
@@ -1414,6 +1424,16 @@ jobs:
               --predicate-type https://cyclonedx.org/bom >/dev/null
           done < SHA256SUMS
 
+      - name: Require successful tree-equivalent PR check
+        if: inputs.publish_update
+        timeout-minutes: 10
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.release.outputs.source_sha }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          PR_CHECK_TEMP: ${{ runner.temp }}/required-pr-check
+        run: node scripts/require-pr-check.mjs
+
       - name: Technischen Stand verifizieren und optional als Updater veröffentlichen
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1468,6 +1488,11 @@ jobs:
           gh release edit "$TAG" -R "$REPO" --draft=false --prerelease=false --latest
           test "$(gh release view "$TAG" -R "$REPO" --json isDraft --jq .isDraft)" = "false"
           echo "Updater veröffentlicht: $TAG · Source $SOURCE_SHA · 11 Ziele."
+
+      - name: Remove PR-check temporary credentials
+        if: always()
+        shell: bash
+        run: rm -rf -- "$RUNNER_TEMP/required-pr-check"
 
       - name: Private Trace-Credentials entfernen
         if: always()
