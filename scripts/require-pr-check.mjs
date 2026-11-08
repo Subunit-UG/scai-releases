@@ -16,7 +16,7 @@ const MAX_PAGES = 10;
 const VERIFICATION_BUDGET_MS = 240000;
 // Expired evidence requires a fresh PR check, never an unbounded API scan.
 export const LOOKBACK_DAYS = 30;
-const MAX_TREE_FETCHES = 16;
+const MAX_TREE_FETCHES = 64;
 const TREE_BUDGET_MS = 120000;
 export const REQUIRED_JOBS = [
   "Exakten Source-Prüfauftrag ohne private Schlüssel validieren",
@@ -129,7 +129,17 @@ export function requireJobs(jobs, run) {
   }
 }
 
-export async function requirePrCheck({ api, sourceSha, treeFor, prefetchTrees, now = new Date(), clock = Date.now }) {
+export async function requirePrCheck(options) {
+  const unresolvable = new Set();
+  try {
+    return await verifyPrCheck({ ...options, unresolvable });
+  } catch (error) {
+    error.message += ` (unresolvable candidates: ${unresolvable.size})`;
+    throw error;
+  }
+}
+
+async function verifyPrCheck({ api, sourceSha, treeFor, prefetchTrees, now = new Date(), clock = Date.now, unresolvable }) {
   if (!SHA.test(sourceSha ?? "")) fail("Exact lowercase source SHA required");
   const started = clock();
   const budget = () => {
@@ -178,6 +188,7 @@ export async function requirePrCheck({ api, sourceSha, treeFor, prefetchTrees, n
         for (const observed of pending.values()) {
           const sha = sourceFromRun(observed, workflow.id);
           const tree = trees.has(sha) ? trees.get(sha) : await treeFor(sha, { budget });
+          if (tree === null) { trees.set(sha, null); unresolvable.add(sha); continue; }
           if (!SHA.test(tree ?? "")) fail("Invalid checked tree");
           trees.set(sha, tree);
           if (tree !== sourceTree) continue;
@@ -216,6 +227,7 @@ export async function requirePrCheck({ api, sourceSha, treeFor, prefetchTrees, n
       for (const run of relevant) {
         const checkedSha = sourceFromRun(run, workflow.id);
         const checkedTree = trees.has(checkedSha) ? trees.get(checkedSha) : await treeFor(checkedSha, { budget });
+        if (checkedTree === null) { trees.set(checkedSha, null); unresolvable.add(checkedSha); continue; }
         if (!SHA.test(checkedTree ?? "")) fail("Invalid checked tree");
         trees.set(checkedSha, checkedTree);
         if (checkedTree === sourceTree) {
@@ -254,18 +266,35 @@ export async function requirePrCheck({ api, sourceSha, treeFor, prefetchTrees, n
   const confirmed = await request(`repos/${REPO}/actions/runs/${run.id}`);
   if (sourceFromRun(confirmed, workflow.id) !== checkedSha || !success(confirmed)
       || confirmed.id !== run.id || confirmed.run_attempt !== run.run_attempt || confirmed.head_sha !== run.head_sha) fail("PR-check run changed during verification");
-  return { runId: run.id, attempt: run.run_attempt, checkedSha, sourceSha, tree: sourceTree };
+  return { runId: run.id, attempt: run.run_attempt, checkedSha, sourceSha, tree: sourceTree,
+    unresolvableCandidates: unresolvable.size };
 }
 
 // No transport output is public: even errors may contain private object paths.
-function command(program, args, options = {}) {
+class VerificationTransportError extends Error {
+  constructor(result, stage) {
+    const timedOut = result.error?.code === "ETIMEDOUT";
+    super(`PR-check verification transport ${timedOut ? "timed out" : "failed"} (stage=${stage} exit=${Number.isInteger(result.status) ? result.status : "none"})`);
+    // Match only upload-pack's explicit missing-object responses. Auth, network,
+    // host-key, process and timeout errors must never become missing evidence.
+    const lines = (result.stderr ?? "").trim().split(/\r?\n/);
+    this.unresolvable = stage === "fetch" && !result.error && result.status === 128
+      && lines.some((line) => /^(?:fatal: (?:git )?upload-pack: not our ref|fatal: remote error: upload-pack: not our ref|error: Server does not allow request for unadvertised object) [0-9a-f]{40}$/.test(line));
+  }
+}
+function command(program, args, { stage, ...options } = {}) {
   const result = spawnSync(program, args, { encoding: "utf8", timeout: 60000, maxBuffer: 8 * 1024 * 1024, ...options });
-  if (result.error?.code === "ETIMEDOUT") fail("PR-check verification transport timed out");
-  if (result.error || result.status !== 0) fail("PR-check verification transport failed");
+  if (result.error || result.status !== 0) throw new VerificationTransportError(result, stage);
   return result.stdout.trim();
 }
 
-export function privateTreeReader(env, { runCommand = command, clock = Date.now, signals = process, exit = (code) => process.exit(code) } = {}) {
+export function privateTreeReader(env, { runCommand = command, clock = Date.now, signals = process,
+  exit = (code) => process.exit(code), transportUrl = "git@github.com:Subunit-UG/scai-app.git" } = {}) {
+  // Only direct callers can select a local transport for integration tests.
+  // The CLI never reads a transport URL from input or the environment.
+  const localTransport = transportUrl.startsWith("file://");
+  if (transportUrl !== "git@github.com:Subunit-UG/scai-app.git"
+      && (!localTransport || !["", "localhost"].includes(new URL(transportUrl).hostname))) fail("Invalid tree transport URL");
   let directory;
   let childEnv;
   let deadline;
@@ -277,11 +306,11 @@ export function privateTreeReader(env, { runCommand = command, clock = Date.now,
     for (const [signal, handler] of handlers) signals.removeListener(signal, handler);
     handlers.clear();
   };
-  const execute = (program, args, budget) => {
+  const execute = (program, args, budget, stage) => {
     deadline ??= clock() + TREE_BUDGET_MS;
     const remaining = deadline - clock();
     if (remaining <= 0) fail("PR-check tree verification exceeded the 120-second budget");
-    const result = runCommand(program, args, { env: childEnv, timeout: Math.min(60000, remaining, budget()) });
+    const result = runCommand(program, args, { env: childEnv, timeout: Math.min(60000, remaining, budget()), stage });
     budget();
     if (clock() >= deadline) fail("PR-check tree verification exceeded the 120-second budget");
     return result;
@@ -290,9 +319,9 @@ export function privateTreeReader(env, { runCommand = command, clock = Date.now,
     if (!Array.isArray(shas) || shas.some((sha) => !SHA.test(sha))) fail("Invalid tree request");
     const missing = [...new Set(shas)].filter((sha) => !cache.has(sha));
     if (!missing.length) return;
-    if (fetches >= MAX_TREE_FETCHES) fail("PR-check tree fetch limit exceeded (maximum 16 batches); retry after Actions activity settles or contact release maintainers");
+    if (fetches >= MAX_TREE_FETCHES) fail("PR-check tree fetch limit exceeded (maximum 64 batches); retry after Actions activity settles or contact release maintainers");
     if (!directory) {
-      if (!env.SOURCE_DEPLOY_KEY) fail("Read-only source deploy key is required");
+      if (!localTransport && !env.SOURCE_DEPLOY_KEY) fail("Read-only source deploy key is required");
       const base = env.PR_CHECK_TEMP || env.RUNNER_TEMP || tmpdir();
       if (env.PR_CHECK_TEMP) mkdirSync(base, { recursive: true, mode: 0o700 });
       directory = mkdtempSync(join(base, "scai-pr-check-"));
@@ -303,35 +332,49 @@ export function privateTreeReader(env, { runCommand = command, clock = Date.now,
       }
       const key = join(directory, "key");
       const hosts = join(directory, "known_hosts");
-      writeFileSync(key, `${env.SOURCE_DEPLOY_KEY}\n`, { mode: 0o600 });
       childEnv = { ...env };
       delete childEnv.SOURCE_DEPLOY_KEY;
       delete childEnv.GH_TOKEN;
       delete childEnv.GITHUB_TOKEN;
-      const hostKey = execute("ssh-keyscan", ["-t", "ed25519", "github.com"], budget)
-        .split("\n").filter((line) => line && !line.startsWith("#"));
-      if (hostKey.length !== 1) fail("Invalid GitHub host key");
-      writeFileSync(hosts, `${hostKey[0]}\n`, { mode: 0o600 });
-      const fingerprint = execute("ssh-keygen", ["-lf", hosts, "-E", "sha256"], budget).split(/\s+/)[1];
-      if (fingerprint !== "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU") fail("GitHub host key pin mismatch");
-      const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
-      childEnv.GIT_SSH_COMMAND = `ssh -i ${quote(key)} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ${quote(`UserKnownHostsFile=${hosts}`)}`;
+      if (!localTransport) {
+        writeFileSync(key, `${env.SOURCE_DEPLOY_KEY}\n`, { mode: 0o600 });
+        const hostKey = execute("ssh-keyscan", ["-t", "ed25519", "github.com"], budget, "keyscan")
+          .split("\n").filter((line) => line && !line.startsWith("#"));
+        if (hostKey.length !== 1) fail("Invalid GitHub host key");
+        writeFileSync(hosts, `${hostKey[0]}\n`, { mode: 0o600 });
+        const fingerprint = execute("ssh-keygen", ["-lf", hosts, "-E", "sha256"], budget, "keygen").split(/\s+/)[1];
+        if (fingerprint !== "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU") fail("GitHub host key pin mismatch");
+        const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+        childEnv.GIT_SSH_COMMAND = `ssh -i ${quote(key)} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ${quote(`UserKnownHostsFile=${hosts}`)}`;
+      }
       childEnv.GIT_TERMINAL_PROMPT = "0";
-      execute("git", ["init", "--bare", join(directory, "source.git")], budget);
+      execute("git", ["init", "--bare", join(directory, "source.git")], budget, "fetch");
     }
-    const git = (args) => execute("git", ["-C", join(directory, "source.git"), ...args], budget);
+    const git = (args) => execute("git", ["-C", join(directory, "source.git"), ...args], budget, args[0] === "rev-parse" ? "rev-parse" : "fetch");
     // Fetch commit/tree objects only; never check out or execute private code.
-    for (let offset = 0; offset < missing.length; offset += PAGE_SIZE * MAX_PAGES) {
-      if (fetches >= MAX_TREE_FETCHES) fail("PR-check tree fetch limit exceeded (maximum 16 batches); retry after Actions activity settles or contact release maintainers");
-      const batch = missing.slice(offset, offset + PAGE_SIZE * MAX_PAGES);
+    const fetchBatch = (batch) => {
+      if (fetches >= MAX_TREE_FETCHES) fail("PR-check tree fetch limit exceeded (maximum 64 batches); retry after Actions activity settles or contact release maintainers");
       fetches++;
-      git(["fetch", "--quiet", "--no-tags", "--depth=1", "--filter=blob:none", "git@github.com:Subunit-UG/scai-app.git", ...batch]);
+      try {
+        git(["fetch", "--quiet", "--no-tags", "--depth=1", "--filter=blob:none", transportUrl, ...batch]);
+      } catch (error) {
+        if (!(error instanceof VerificationTransportError) || !error.unresolvable) throw error;
+        if (batch.length === 1) { cache.set(batch[0], null); return; }
+        const middle = Math.floor(batch.length / 2);
+        fetchBatch(batch.slice(0, middle));
+        fetchBatch(batch.slice(middle));
+        return;
+      }
       for (const sha of batch) {
         if (git(["rev-parse", `${sha}^{commit}`]) !== sha) fail("Source commit drift");
         const tree = git(["rev-parse", `${sha}^{tree}`]);
         if (!SHA.test(tree)) fail("Invalid Git tree");
         cache.set(sha, tree);
       }
+    };
+    for (let offset = 0; offset < missing.length; offset += PAGE_SIZE * MAX_PAGES) {
+      const batch = missing.slice(offset, offset + PAGE_SIZE * MAX_PAGES);
+      fetchBatch(batch);
     }
   };
   return {
@@ -350,7 +393,7 @@ export async function main(env = process.env) {
   const childEnv = { ...env };
   delete childEnv.SOURCE_DEPLOY_KEY;
   const api = async (path, options) => {
-    const response = command("gh", ["api", "--method", "GET", path], { env: childEnv, ...options });
+    const response = command("gh", ["api", "--method", "GET", path], { env: childEnv, ...options, stage: "api" });
     try { return JSON.parse(response); } catch { fail("Invalid Actions JSON"); }
   };
   const reader = privateTreeReader(env);
@@ -358,7 +401,7 @@ export async function main(env = process.env) {
     const proof = await requirePrCheck({ api, sourceSha: env.SOURCE_SHA,
       treeFor: (sha, options) => reader.treeFor(sha, options), prefetchTrees: (shas, options) => reader.prefetch(shas, options) });
     if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `pr_check_run_id=${proof.runId}\npr_check_tree=${proof.tree}\n`);
-    console.log(`PASS required-pr-check run=${proof.runId} attempt=${proof.attempt} source=${proof.sourceSha} checked=${proof.checkedSha} tree=${proof.tree}`);
+    console.log(`PASS required-pr-check run=${proof.runId} attempt=${proof.attempt} unresolvable-candidates=${proof.unresolvableCandidates}`);
     return proof;
   } finally { reader.close(); }
 }

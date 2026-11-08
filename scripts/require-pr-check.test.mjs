@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { spawnSync, spawn } from "node:child_process";
 import { EventEmitter, once } from "node:events";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import { requirePrCheck, sourceFromRun, requireJobs, privateTreeReader, main, REQUIRED_JOBS, REQUIRED_PROOFS } from "./require-pr-check.mjs";
 import { validatePrCheckGuard, validatePrCheckPolicy, validateReleaseEnvironments } from "./require-pr-check-workflow.mjs";
@@ -565,7 +565,7 @@ test("non-exact candidate trees are deduplicated and prefetched once", async () 
 test("batch failures or invalid checked trees never fall back to older evidence", async () => {
   const h = harness();
   h.runs.push({ ...h.run, id: h.run.id + 1, display_title: h.run.display_title.replace(GREEN, UNCHECKED) });
-  h.trees[UNCHECKED] = null;
+  h.trees[UNCHECKED] = undefined;
   await assert.rejects(h.verify(), /Invalid checked tree/);
   await assert.rejects(requirePrCheck({ api: h.api, sourceSha: GREEN, now: NOW,
     treeFor: async () => h.trees[GREEN],
@@ -958,16 +958,16 @@ test("tree transport obeys the remaining total budget after nine slow API calls"
   } finally { reader.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("tree reader allows sixteen deduplicated batches and rejects a seventeenth with recovery text", () => {
-  const shas = Array.from({ length: 17 }, (_, i) => (i + 1).toString(16).padStart(40, "0"));
+test("tree reader allows 64 deduplicated batches and rejects a 65th with recovery text", () => {
+  const shas = Array.from({ length: 65 }, (_, i) => (i + 1).toString(16).padStart(40, "0"));
   const trees = Object.fromEntries(shas.map((sha) => [sha, "a".repeat(40)]));
   const transport = simulatedTreeReader(trees);
   try {
-    for (const sha of shas.slice(0, 16)) transport.reader.prefetch([sha, sha, shas[0]]);
-    assert.equal(transport.fetches.length, 16);
+    for (const sha of shas.slice(0, 64)) transport.reader.prefetch([sha, sha, shas[0]]);
+    assert.equal(transport.fetches.length, 64);
     assert.ok(transport.fetches.every((batch) => batch.length === 1));
-    assert.throws(() => transport.reader.treeFor(shas[16]), /maximum 16 batches\); retry after Actions activity settles or contact release maintainers/);
-    assert.equal(transport.fetches.length, 16);
+    assert.throws(() => transport.reader.treeFor(shas[64]), /maximum 64 batches\); retry after Actions activity settles or contact release maintainers/);
+    assert.equal(transport.fetches.length, 64);
     assert.equal(transport.reader.treeFor(shas[0]), trees[shas[0]], "cache remains valid across all batches");
   } finally { transport.close(); }
 });
@@ -976,13 +976,13 @@ test("tree reader enforces its time and batch-size budgets without network acces
   const dir = mkdtempSync(join(tmpdir(), "pr-tree-limits-"));
   const env = { RUNNER_TEMP: dir, SOURCE_DEPLOY_KEY: "fixture-key" };
   try {
-    const shas = Array.from({ length: 16001 }, (_, i) => i.toString(16).padStart(40, "0"));
+    const shas = Array.from({ length: 64001 }, (_, i) => i.toString(16).padStart(40, "0"));
     const transport = simulatedTreeReader(Object.fromEntries(shas.map((sha) => [sha, "a".repeat(40)])));
     try {
-      assert.throws(() => transport.reader.prefetch(shas), /maximum 16 batches/);
-      assert.deepEqual(transport.fetches.map((batch) => batch.length), Array(16).fill(1000));
-      assert.equal(transport.reader.treeFor(shas[15999]), "a".repeat(40), "completed batches stay cached");
-      assert.throws(() => transport.reader.treeFor(shas[16000]), /maximum 16 batches/);
+      assert.throws(() => transport.reader.prefetch(shas), /maximum 64 batches/);
+      assert.deepEqual(transport.fetches.map((batch) => batch.length), Array(64).fill(1000));
+      assert.equal(transport.reader.treeFor(shas[63999]), "a".repeat(40), "completed batches stay cached");
+      assert.throws(() => transport.reader.treeFor(shas[64000]), /maximum 64 batches/);
       assert.throws(() => transport.reader.prefetch(["--help"]), /Invalid tree request/);
     } finally { transport.close(); }
     let elapsed = 0;
@@ -1051,4 +1051,223 @@ test("real signal cancellation removes the temporary key before process exit", {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// file:// invokes upload-pack instead of Git's direct local object-copy path.
+function localTransportFixture(coverage = 0) {
+  const directory = mkdtempSync(join(tmpdir(), "pr-check-upload-pack-"));
+  const origin = join(directory, "origin.git");
+  const git = (args, input) => {
+    const result = spawnSync("git", args, { encoding: "utf8", input, env: {
+      ...process.env, GIT_AUTHOR_NAME: "Fixture", GIT_AUTHOR_EMAIL: "fixture@example.invalid",
+      GIT_COMMITTER_NAME: "Fixture", GIT_COMMITTER_EMAIL: "fixture@example.invalid",
+    } });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  git(["init", "--bare", origin]);
+  const atOrigin = (args, input) => git(["-C", origin, ...args], input);
+  atOrigin(["config", "uploadpack.allowReachableSHA1InWant", "true"]);
+  atOrigin(["config", "uploadpack.allowFilter", "true"]);
+  const tree = atOrigin(["mktree"], "");
+  const blob = atOrigin(["hash-object", "-w", "--stdin"], "different tree\n");
+  const otherTree = atOrigin(["mktree"], `100644 blob ${blob}\tfile\n`);
+  const commit = (value, message) => atOrigin(["commit-tree", value], message + "\n");
+  const source = commit(tree, "release");
+  const green = commit(tree, "green PR head");
+  const other = commit(otherTree, "different PR head");
+  const missing = Array.from({ length: 3 }, (_, i) => commit(tree, `removed PR head ${i}`));
+  atOrigin(["update-ref", "refs/heads/main", source]);
+  atOrigin(["update-ref", "refs/heads/green", green]);
+  atOrigin(["update-ref", "refs/heads/other", other]);
+  for (const sha of missing) {
+    atOrigin(["update-ref", "refs/heads/rebased", sha]);
+    atOrigin(["update-ref", "refs/heads/rebased", source, sha]);
+  }
+  let covered = [];
+  if (coverage) {
+    const stream = Array.from({ length: coverage }, (_, index) => {
+      const message = `coverage ${index}`;
+      return `commit refs/heads/coverage\nmark :${index + 1}\ncommitter Fixture <fixture@example.invalid> 1700000000 +0000\ndata ${message.length}\n${message}\ndeleteall\n\n`;
+    }).join("");
+    const marks = join(directory, "marks");
+    atOrigin(["fast-import", "--quiet", `--export-marks=${marks}`], stream);
+    covered = readFileSync(marks, "utf8").trim().split("\n").map((line) => line.split(" ")[1]);
+  }
+  atOrigin(["reflog", "expire", "--expire=now", "--all"]);
+  atOrigin(["gc", "--prune=now"]);
+  for (const sha of missing) {
+    assert.equal(spawnSync("git", ["-C", origin, "cat-file", "-e", sha]).status, 1, "removed object is absent");
+  }
+  const readers = [];
+  return { directory, origin, source, green, other, missing, tree, otherTree, covered,
+    reader(options = {}) {
+      const reader = privateTreeReader({ PATH: process.env.PATH, RUNNER_TEMP: directory }, {
+        transportUrl: pathToFileURL(origin).href, ...options,
+      });
+      readers.push(reader);
+      return reader;
+    },
+    close() { for (const reader of readers) reader.close(); rmSync(directory, { recursive: true, force: true }); },
+  };
+}
+
+function withTransportCandidates(h, fixture, valid = true) {
+  h.run.display_title = h.run.display_title.replace(GREEN, valid ? fixture.green : fixture.other);
+  for (const [index, sha] of fixture.missing.entries()) {
+    h.runs.push({ ...h.run, id: h.run.id + index + 1, conclusion: "failure",
+      created_at: new Date(Date.parse(h.run.created_at) + (index + 1) * 1000).toISOString(),
+      display_title: h.run.display_title.replace(valid ? fixture.green : fixture.other, sha) });
+  }
+}
+
+test("real upload-pack bisects unreachable heads and approves reachable tree evidence", async (t) => {
+  const fixture = localTransportFixture();
+  const started = Date.now();
+  try {
+    const h = harness();
+    withTransportCandidates(h, fixture);
+    const reader = fixture.reader();
+    const proof = await requirePrCheck({ api: h.api, sourceSha: fixture.source, now: NOW,
+      treeFor: (sha, options) => reader.treeFor(sha, options),
+      prefetchTrees: (shas, options) => reader.prefetch(shas, options) });
+    assert.equal(proof.runId, h.run.id);
+    assert.equal(proof.checkedSha, fixture.green);
+    assert.equal(proof.tree, fixture.tree);
+    assert.equal(proof.unresolvableCandidates, 3, "unique missing heads counted across both scans");
+    for (const sha of fixture.missing) assert.equal(reader.treeFor(sha), null, "missing results cached");
+    assert.equal(reader.treeFor(fixture.green), fixture.tree);
+    assert.ok(Date.now() - started < 120000);
+    t.diagnostic(`real upload-pack PASS; unreachable=3; elapsed-ms=${Date.now() - started}`);
+  } finally { fixture.close(); }
+});
+
+test("real upload-pack without reachable tree evidence fails for the semantic reason", async () => {
+  const fixture = localTransportFixture();
+  try {
+    const h = harness();
+    withTransportCandidates(h, fixture, false);
+    const reader = fixture.reader();
+    await assert.rejects(requirePrCheck({ api: h.api, sourceSha: fixture.source, now: NOW,
+      treeFor: (sha, options) => reader.treeFor(sha, options),
+      prefetchTrees: (shas, options) => reader.prefetch(shas, options) }), (error) => {
+      assert.equal(error.message, "No tree-equivalent completed PR check (unresolvable candidates: 3)");
+      assert.doesNotMatch(error.message, /[0-9a-f]{40}|transport/);
+      return true;
+    });
+  } finally { fixture.close(); }
+});
+
+test("an unreachable release source cannot be replaced with candidate evidence", async () => {
+  const fixture = localTransportFixture();
+  try {
+    const h = harness();
+    withTransportCandidates(h, fixture);
+    const reader = fixture.reader();
+    await assert.rejects(requirePrCheck({ api: h.api, sourceSha: fixture.missing[0], now: NOW,
+      treeFor: (sha, options) => reader.treeFor(sha, options),
+      prefetchTrees: (shas, options) => reader.prefetch(shas, options) }), /Invalid source tree/);
+  } finally { fixture.close(); }
+});
+
+test("unreachable pending heads are skipped without replacing reachable evidence", async () => {
+  const h = harness();
+  const missing = "9".repeat(40);
+  const pending = { ...h.run, id: h.run.id + 1, status: "in_progress", conclusion: null,
+    created_at: new Date(Date.parse(h.run.created_at) + 1000).toISOString(),
+    display_title: h.run.display_title.replace(GREEN, missing) };
+  h.runs.push(pending);
+  h.trees[missing] = null;
+  const proof = await h.verify();
+  assert.equal(proof.unresolvableCandidates, 1);
+  assert.equal(proof.runId, h.run.id);
+  assert.ok(!h.calls.some((path) => path.endsWith(`/runs/${pending.id}`)));
+});
+
+// Execute the actual command wrapper too: injected strings must never leak into
+// public errors, and a generic fetch failure must never become missing evidence.
+function failingCommandReader(stage, stderr = "private-path private-value " + "e".repeat(40), status = 23) {
+  const directory = mkdtempSync(join(tmpdir(), "pr-check-stage-"));
+  const bin = join(directory, "bin"); mkdirSync(bin);
+  for (const name of ["ssh-keyscan", "ssh-keygen", "git", "gh"]) {
+    writeFileSync(join(bin, name), `#!${process.execPath}
+      const args = process.argv.slice(2);
+      const name = ${JSON.stringify(name)};
+      const stage = name === 'gh' ? 'api' : name === 'ssh-keyscan' ? 'keyscan' : name === 'ssh-keygen' ? 'keygen' : args.includes('rev-parse') ? 'rev-parse' : args.includes('fetch') ? 'fetch' : 'init';
+      if (stage === ${JSON.stringify(stage)}) { process.stderr.write(${JSON.stringify(stderr)}); if (${status} === null) setInterval(() => {}, 1000); else process.exit(${status}); }
+      if (stage === 'keyscan') console.log('github.com ssh-ed25519 fixture');
+      if (stage === 'keygen') console.log('256 SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU github.com');
+      if (stage === 'rev-parse') console.log(args.at(-1).endsWith('^{commit}') ? args.at(-1).slice(0, -9) : 'a'.repeat(40));
+    `, { mode: 0o755 });
+  }
+  const env = { PATH: `${bin}:${process.env.PATH}`, RUNNER_TEMP: directory, SOURCE_DEPLOY_KEY: "fixture-key",
+    GH_TOKEN: "fixture-token", GITHUB_REPOSITORY: "Subunit-UG/scai-releases", GITHUB_REF: "refs/heads/main", SOURCE_SHA: GREEN };
+  const reader = privateTreeReader(env);
+  return { env, reader, close() { reader.close(); rmSync(directory, { recursive: true, force: true }); } };
+}
+
+test("non-missing fetch failures stay hard transport errors", () => {
+  for (const [stderr, status] of [
+    ["Permission denied (publickey).", 128], ["Could not resolve hostname", 128],
+    ["Host key verification failed.", 128], ["Connection timed out", 128],
+    ["fatal: the remote end hung up unexpectedly", 128],
+    ["private path mentions not our ref but is not an upload-pack rejection", 128],
+    [`fatal: remote error: upload-pack: not our ref ${GREEN}`, 1],
+  ]) {
+    const transport = failingCommandReader("fetch", stderr, status);
+    try {
+      assert.throws(() => transport.reader.prefetch([GREEN, UNCHECKED]), (error) => {
+        assert.equal(error.message, `PR-check verification transport failed (stage=fetch exit=${status})`);
+        return true;
+      });
+    } finally { transport.close(); }
+  }
+});
+
+test("public transport errors identify only stage and exit code", async () => {
+  for (const stage of ["api", "keyscan", "keygen", "fetch", "rev-parse"]) {
+    const transport = failingCommandReader(stage);
+    try {
+      const action = stage === "api" ? () => main(transport.env) : async () => transport.reader.treeFor(GREEN);
+      await assert.rejects(action(), (error) => {
+        assert.ok(error.message.startsWith(`PR-check verification transport failed (stage=${stage} exit=23)`));
+        assert.doesNotMatch(error.message, /private-path|private-value|[0-9a-f]{40}/);
+        return true;
+      });
+    } finally { transport.close(); }
+  }
+});
+
+test("real upload-pack resolves a 1000-head batch with three unreachable heads within budget", (t) => {
+  const fixture = localTransportFixture(997);
+  const reader = fixture.reader();
+  const batch = [...fixture.covered];
+  for (const [index, sha] of fixture.missing.entries()) batch.splice(index * 333, 0, sha);
+  const started = Date.now();
+  try {
+    assert.equal(batch.length, 1000);
+    reader.prefetch(batch);
+    for (const sha of fixture.covered) assert.equal(reader.treeFor(sha), fixture.tree);
+    for (const sha of fixture.missing) assert.equal(reader.treeFor(sha), null);
+    assert.ok(Date.now() - started < 120000);
+    t.diagnostic(`real upload-pack batch=1000; reachable=997; unreachable=3; elapsed-ms=${Date.now() - started}`);
+  } finally { fixture.close(); }
+});
+
+test("a real fetch process timeout remains a hard transport error", () => {
+  const transport = failingCommandReader("fetch", "not our ref", null);
+  try {
+    assert.throws(() => transport.reader.treeFor(GREEN, { budget: () => 1000 }), (error) => {
+      assert.equal(error.message, "PR-check verification transport timed out (stage=fetch exit=none)");
+      return true;
+    });
+  } finally { transport.close(); }
+});
+
+test("the production reader cannot select a test transport through environment input", () => {
+  const reader = privateTreeReader({ PR_CHECK_TRANSPORT_URL: "file:///fixture", TRANSPORT_URL: "file:///fixture" });
+  try { assert.throws(() => reader.treeFor(GREEN), /Read-only source deploy key is required/); }
+  finally { reader.close(); }
+  assert.throws(() => privateTreeReader({}, { transportUrl: "https://fixture.invalid" }), /Invalid tree transport URL/);
+  assert.throws(() => privateTreeReader({}, { transportUrl: "file://fixture.invalid/source.git" }), /Invalid tree transport URL/);
 });
