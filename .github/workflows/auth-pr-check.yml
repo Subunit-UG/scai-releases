@@ -116,6 +116,30 @@ jobs:
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" auth-tests bash scripts/ci/run-proof-suite.sh
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" auth-build bun build src/server.ts --target bun --outdir "$RUNNER_TEMP/subunit-auth-build"
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" auth-deploy-gate bash -n scripts/deploy.sh
+      # Mauer 08.11.2026: oidc/test/interaction.node.mjs war nach infra-auth #177 komplett rot und keiner merkte es, weil
+      # hier nur test/*.test.ts unter Bun lief. Die OIDC-Tests ohne Datenbank und Browser laufen mit genau der Node-Version
+      # des OIDC-Dienstes (oidc/package.json engines >=22.23.4 <23).
+      - name: Gepinntes Node der OIDC-Laufzeit einrichten
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4, immutable
+        with:
+          node-version: 22.23.4
+      - name: OIDC-Tests ohne Datenbank und Browser
+        working-directory: private/subunit-auth
+        env:
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.diagnostic_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ inputs.diagnostic_public_key_base64 != '' && format('{0}/auth-diagnostic.json', runner.temp) || '' }}
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = v22.23.4
+          bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" auth-oidc-install bash -c 'cd oidc && bun install --frozen-lockfile'
+          if [ -f scripts/ci/run-oidc-unit.sh ]; then
+            bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" auth-oidc-unit bash scripts/ci/run-oidc-unit.sh
+          else
+            # Ältere Stände ohne Einordnungsskript: dieselben vier Dateien direkt.
+            bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" auth-oidc-unit node --test --test-concurrency=1 \
+              oidc/test/bridge.node.mjs oidc/test/interaction.node.mjs oidc/test/lane.node.mjs oidc/test/policy.node.mjs
+          fi
+          echo "PASS auth-oidc-unit (source-sha=$SOURCE_SHA)"
       - name: Verschluesselte Auth-Diagnostik sichern
         if: failure() && inputs.diagnostic_public_key_base64 != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
