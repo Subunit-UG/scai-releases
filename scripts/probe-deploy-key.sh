@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy-Key-Wächter (Vorfall 2026-11-08-ci-deploy-keys-verschwunden): Kann der Schlüssel aus genau einem
+# Deploy-Key-Wächter: Kann der Schlüssel aus genau einem
 # *_SOURCE_DEPLOY_KEY-Secret sein privates Quell-Repo noch lesen? Am 08.11. verschwanden die öffentlichen Gegenstücke in
 # 9 von 10 Repos still; aufgefallen ist es erst beim nächsten Gate. Dieser Probelauf liest nur die Ref-Liste
 # (git ls-remote), gibt keine Refs, keine Transportausgabe und nie Schlüsselmaterial aus, nur PASS/FAIL.

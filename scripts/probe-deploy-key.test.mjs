@@ -77,11 +77,12 @@ test("Workflow prüft genau die Secrets, die die Checks benutzen, und läuft tä
   const used = new Set();
   for (const f of readdirSync(join(ROOT, ".github/workflows"))) {
     if (f === "deploy-key-probe.yml") continue;
-    for (const m of readFileSync(join(ROOT, ".github/workflows", f), "utf8").matchAll(/secrets\.([A-Z_]*SOURCE_DEPLOY_KEY)\b/g)) used.add(m[1]);
+    for (const m of readFileSync(join(ROOT, ".github/workflows", f), "utf8").matchAll(/secrets\.([A-Z0-9_]*SOURCE_DEPLOY_KEY)\b/g)) used.add(m[1]);
   }
-  const probed = new Set([...wf.matchAll(/secret: ([A-Z_]*SOURCE_DEPLOY_KEY)\b/g)].map(m => m[1]));
+  const probed = new Set([...wf.matchAll(/SOURCE_DEPLOY_KEY: \$\{\{ secrets\.([A-Z0-9_]*SOURCE_DEPLOY_KEY) \}\}\n        run: bash scripts\/probe-deploy-key\.sh \1 /g)].map(m => m[1]));
   for (const s of used) assert.ok(probed.has(s), `${s} wird in Checks benutzt, aber nicht geprüft`);
   assert.match(wf, /schedule:\s*\n\s*- cron:/);
   assert.match(wf, /permissions:\s*\n\s*contents: read/);
-  assert.match(wf, /secrets\[matrix\.secret\]/);
+  assert.doesNotMatch(wf, /secrets\s*\[/, "kein dynamischer secrets[...]-Zugriff");
+  assert.equal((wf.match(/if: \$\{\{ !cancelled\(\) \}\}/g) ?? []).length, probed.size, "jede Probe läuft auch nach einem Fehlschlag");
 });

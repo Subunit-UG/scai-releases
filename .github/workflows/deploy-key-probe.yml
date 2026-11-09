@@ -1,7 +1,6 @@
-# Deploy-Key-Wächter (Vorfall 2026-11-08-ci-deploy-keys-verschwunden): Am 08.11. verschwanden die öffentlichen
-# Gegenstücke der Nur-Lese-Deploy-Keys in 9 von 10 privaten Quell-Repos still; aufgefallen ist es erst, als ein Gate
-# rot wurde. Täglich (und von Hand) prüft dieser Lauf je Secret, ob es sein Repo noch lesen kann (git ls-remote).
-# Ausgabe nur PASS/FAIL, nie Refs oder Schlüsselmaterial. Das Ergebnis liest der Mac täglich (u1-marken-pruefung).
+# Deploy-Key-Wächter: Am 08.11. verschwanden die öffentlichen Gegenstücke der Nur-Lese-Deploy-Keys in 9 von 10
+# privaten Quell-Repos still; aufgefallen ist es erst, als ein Gate rot wurde. Täglich (und von Hand) prüft dieser Lauf
+# je Secret, ob es sein Repo noch lesen kann (git ls-remote). Ausgabe nur PASS/FAIL, nie Refs oder Schlüsselmaterial.
 
 name: Deploy-Key-Wächter
 
@@ -19,31 +18,63 @@ concurrency:
 
 jobs:
   probe:
-    name: ${{ matrix.secret }}
+    name: Lesezugriff je Deploy-Key
     runs-on: ubuntu-24.04
-    timeout-minutes: 3
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { secret: SOURCE_DEPLOY_KEY, repository: Subunit-UG/scai-app }
-          - { secret: AUTH_SOURCE_DEPLOY_KEY, repository: Subunit-UG/infra-auth }
-          - { secret: U1_CHAT_SOURCE_DEPLOY_KEY, repository: Subunit-UG/infra-u1-chat }
-          - { secret: ATLAS_SOURCE_DEPLOY_KEY, repository: Subunit-UG/infra-atlas }
-          - { secret: ECHO_SOURCE_DEPLOY_KEY, repository: Subunit-UG/echo-server }
-          - { secret: NOTCH_SOURCE_DEPLOY_KEY, repository: Subunit-UG/mac-notch }
-          - { secret: ZENTRALE_SOURCE_DEPLOY_KEY, repository: Subunit-UG/notch-zentrale }
-          - { secret: SONAR_SOURCE_DEPLOY_KEY, repository: Subunit-UG/sonar-tauri }
-          - { secret: BRIDGE_SOURCE_DEPLOY_KEY, repository: Subunit-UG/bridge-tauri }
-          - { secret: TRACE_SOURCE_DEPLOY_KEY, repository: Subunit-UG/trace-tauri }
+    timeout-minutes: 5
     steps:
       - name: Öffentliche Gate-Tools auschecken
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2, immutable
         with:
           persist-credentials: false
-      - name: Lesezugriff prüfen
+      # Je Secret ein eigener Schritt mit statischem Secret-Namen (dynamische Secret-Zugriffe sperrt die Vertragsprüfung
+      # für Signier-Secrets). !cancelled(): ein fehlender Schlüssel verhindert die übrigen Proben nicht.
+      - name: SOURCE_DEPLOY_KEY → Subunit-UG/scai-app
+        if: ${{ !cancelled() }}
         env:
-          SOURCE_DEPLOY_KEY: ${{ secrets[matrix.secret] }}
-          PROBE_SECRET: ${{ matrix.secret }}
-          PROBE_REPOSITORY: ${{ matrix.repository }}
-        run: bash scripts/probe-deploy-key.sh "$PROBE_SECRET" "$PROBE_REPOSITORY"
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+        run: bash scripts/probe-deploy-key.sh SOURCE_DEPLOY_KEY Subunit-UG/scai-app
+      - name: AUTH_SOURCE_DEPLOY_KEY → Subunit-UG/infra-auth
+        if: ${{ !cancelled() }}
+        env:
+          SOURCE_DEPLOY_KEY: ${{ secrets.AUTH_SOURCE_DEPLOY_KEY }}
+        run: bash scripts/probe-deploy-key.sh AUTH_SOURCE_DEPLOY_KEY Subunit-UG/infra-auth
+      - name: U1_CHAT_SOURCE_DEPLOY_KEY → Subunit-UG/infra-u1-chat
+        if: ${{ !cancelled() }}
+        env:
+          SOURCE_DEPLOY_KEY: ${{ secrets.U1_CHAT_SOURCE_DEPLOY_KEY }}
+        run: bash scripts/probe-deploy-key.sh U1_CHAT_SOURCE_DEPLOY_KEY Subunit-UG/infra-u1-chat
+      - name: ATLAS_SOURCE_DEPLOY_KEY → Subunit-UG/infra-atlas
+        if: ${{ !cancelled() }}
+        env:
+          SOURCE_DEPLOY_KEY: ${{ secrets.ATLAS_SOURCE_DEPLOY_KEY }}
+        run: bash scripts/probe-deploy-key.sh ATLAS_SOURCE_DEPLOY_KEY Subunit-UG/infra-atlas
+      - name: ECHO_SOURCE_DEPLOY_KEY → Subunit-UG/echo-server
+        if: ${{ !cancelled() }}
+        env:
+          SOURCE_DEPLOY_KEY: ${{ secrets.ECHO_SOURCE_DEPLOY_KEY }}
+        run: bash scripts/probe-deploy-key.sh ECHO_SOURCE_DEPLOY_KEY Subunit-UG/echo-server
+      - name: NOTCH_SOURCE_DEPLOY_KEY → Subunit-UG/mac-notch
+        if: ${{ !cancelled() }}
+        env:
+          SOURCE_DEPLOY_KEY: ${{ secrets.NOTCH_SOURCE_DEPLOY_KEY }}
+        run: bash scripts/probe-deploy-key.sh NOTCH_SOURCE_DEPLOY_KEY Subunit-UG/mac-notch
+      - name: ZENTRALE_SOURCE_DEPLOY_KEY → Subunit-UG/notch-zentrale
+        if: ${{ !cancelled() }}
+        env:
+          SOURCE_DEPLOY_KEY: ${{ secrets.ZENTRALE_SOURCE_DEPLOY_KEY }}
+        run: bash scripts/probe-deploy-key.sh ZENTRALE_SOURCE_DEPLOY_KEY Subunit-UG/notch-zentrale
+      - name: SONAR_SOURCE_DEPLOY_KEY → Subunit-UG/sonar-tauri
+        if: ${{ !cancelled() }}
+        env:
+          SOURCE_DEPLOY_KEY: ${{ secrets.SONAR_SOURCE_DEPLOY_KEY }}
+        run: bash scripts/probe-deploy-key.sh SONAR_SOURCE_DEPLOY_KEY Subunit-UG/sonar-tauri
+      - name: BRIDGE_SOURCE_DEPLOY_KEY → Subunit-UG/bridge-tauri
+        if: ${{ !cancelled() }}
+        env:
+          SOURCE_DEPLOY_KEY: ${{ secrets.BRIDGE_SOURCE_DEPLOY_KEY }}
+        run: bash scripts/probe-deploy-key.sh BRIDGE_SOURCE_DEPLOY_KEY Subunit-UG/bridge-tauri
+      - name: TRACE_SOURCE_DEPLOY_KEY → Subunit-UG/trace-tauri
+        if: ${{ !cancelled() }}
+        env:
+          SOURCE_DEPLOY_KEY: ${{ secrets.TRACE_SOURCE_DEPLOY_KEY }}
+        run: bash scripts/probe-deploy-key.sh TRACE_SOURCE_DEPLOY_KEY Subunit-UG/trace-tauri
