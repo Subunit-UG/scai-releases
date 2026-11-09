@@ -1,4 +1,4 @@
-# Freigabe-Tests: volle Testsuite bei JEDEM PR auf main, ohne Pfadfilter (TJ 2026-10-24).
+# Freigabe-Tests: volle Testsuite bei JEDEM PR auf main, ohne Pfadfilter.
 # Läuft unter pull_request (Cache-Bereich des PR-Branches, Lesetoken, keine Secrets).
 # Ihr grüner Check-Run "Volle Testsuite" ist Pflicht-Check auf main und Voraussetzung
 # für die automatische Freigabe (auto-freigabe.yml).
@@ -7,7 +7,8 @@ name: Freigabe-Tests
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # edited: ein nachträglich geänderter PR-Titel oder -Text wird erneut auf Neutralität geprüft.
+    types: [opened, synchronize, reopened, ready_for_review, edited]
     branches: [main]
 
 permissions:
@@ -26,11 +27,21 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2, immutable
         with:
           persist-credentials: false
+          fetch-depth: 0 # Basis und Head für die Neutralitätsprüfung
+      - name: Öffentliche Texte neutral prüfen
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/verify_public_neutral.py --base "$BASE_SHA" --head "$HEAD_SHA"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4, immutable
         with:
           node-version: 22
       - name: Alle Skript-Tests
         run: node --test scripts/*.test.mjs
+      - name: Neutralitätsprüfung testen
+        run: python3 -m unittest discover -s scripts -p 'test_verify_public_neutral.py' -v
       - name: Fleet-Manifeste prüfen
         run: node scripts/verify-fleet-manifest.mjs
       - name: Release-Workflow fail-closed prüfen

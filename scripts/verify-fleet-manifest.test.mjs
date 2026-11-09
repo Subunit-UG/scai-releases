@@ -146,7 +146,7 @@ test("a cosmetic top-level PASS fails closed while evidence remains open", () =>
   assert.match(errors, /PASS requires operations status PASS/);
 });
 
-// Org-Umzug (TJ 2026-10-30): Pins dürfen genau auf subunit-ai/<repo> (historisch) oder
+// Org-Umzug (30.10.2026): Pins dürfen genau auf subunit-ai/<repo> (historisch) oder
 // Subunit-UG/<repo> zeigen, Groß-/Kleinschreibung des Owners egal. Alles andere bleibt zu.
 for (const repository of [
   "https://github.com/subunit-ai/subunit-scai",

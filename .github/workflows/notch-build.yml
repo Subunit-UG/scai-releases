@@ -11,7 +11,7 @@
 # fluechtigen Dateien (run-confidential.sh). Oeffentlich erscheinen nur Pin,
 # Team-ID, Bundle-Identifier und Pruefsummen — keine Zertifikatsnamen.
 #
-# Signierwege (TJ 2026-11-04: Notch signiert in den Store):
+# Signierwege (seit 04.11.2026 wird Notch für den Store signiert):
 #   developer-id  Developer ID Application des Firmenteams 8V35FVMFT9, Hardened
 #                 Runtime, sichere Zeitstempel, Notarisierung bei Apple und
 #                 angeheftetes Ticket. Die Notch-Zentrale (eigenes Repo) wird mit

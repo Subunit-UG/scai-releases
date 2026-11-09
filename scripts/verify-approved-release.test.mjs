@@ -10,7 +10,7 @@ import { verifyApprovedRelease } from "./verify-approved-release.mjs";
 import { validateManifest } from "./verify-fleet-manifest.mjs";
 import { releaseAssetNames, validateReleaseAuthorization } from "./release-authorization.mjs";
 
-// Kanonisch seit dem Org-Umzug (TJ 2026-10-30); LEGACY ist die weitergeleitete alte Adresse.
+// Kanonisch seit dem Org-Umzug (30.10.2026); LEGACY ist die weitergeleitete alte Adresse.
 const repository = "Subunit-UG/scai-releases";
 const LEGACY = "subunit-ai/scai-releases";
 const tag = "v1.2.3";
@@ -133,7 +133,7 @@ for (const [name, mutate] of [
   await assert.rejects(f.verify());
 });
 
-// Org-Umzug (TJ 2026-10-30): github.repository und browser_download_url liefern nach dem
+// Org-Umzug (30.10.2026): github.repository und browser_download_url liefern nach dem
 // Umzug Subunit-UG, Freigaben/Drafts/latest.json von vorher tragen subunit-ai. Beide
 // Schreibweisen desselben Repos müssen bestehen, jeder andere Owner bleibt zu.
 for (const [label, repos, workflowRepository] of [

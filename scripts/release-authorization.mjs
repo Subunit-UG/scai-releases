@@ -1,6 +1,6 @@
 import { parseVersion } from "./assert-semver-monotonic.mjs";
 
-// Org-Umzug (TJ 2026-10-30): subunit-ai/scai-releases heißt jetzt Subunit-UG/scai-releases.
+// Org-Umzug (30.10.2026): subunit-ai/scai-releases heißt jetzt Subunit-UG/scai-releases.
 // GitHub leitet die alte Adresse weiter, github.repository und browser_download_url
 // liefern danach aber die neue. Freigaben und Belege aus der Zeit vor dem Umzug tragen
 // die alte. Zugelassen sind deshalb genau diese zwei Owner (Groß-/Kleinschreibung egal,
