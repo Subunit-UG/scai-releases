@@ -128,7 +128,7 @@ test("repository allowlist, immutable SHA and dedicated key fail closed", () => 
   }
 });
 
-// Org-Umzug (TJ 2026-10-30): je Komponente genau der kanonische Subunit-UG-Pfad. Alte
+// Org-Umzug (30.10.2026): je Komponente genau der kanonische Subunit-UG-Pfad. Alte
 // subunit-ai-Pfade (nur noch per Weiterleitung), fremde Owner und Doppelgänger werden
 // vor jedem Schlüssel- oder Netzzugriff abgewiesen.
 const CANONICAL_SOURCES = {

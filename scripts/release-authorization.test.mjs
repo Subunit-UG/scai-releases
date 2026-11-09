@@ -6,7 +6,7 @@ import {
   sameReleaseAssetUrl, sameReleaseRepository, validateReleaseAuthorization,
 } from "./release-authorization.mjs";
 
-// Org-Umzug (TJ 2026-10-30): subunit-ai/scai-releases -> Subunit-UG/scai-releases.
+// Org-Umzug (30.10.2026): subunit-ai/scai-releases -> Subunit-UG/scai-releases.
 // Erlaubt sind genau diese zwei Owner, Groß-/Kleinschreibung egal, sonst nichts.
 const tag = "v1.2.3";
 const SPELLINGS = ["subunit-ai/scai-releases", "Subunit-UG/scai-releases", "SUBUNIT-AI/scai-releases", "subunit-ug/scai-releases"];

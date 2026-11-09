@@ -51,7 +51,7 @@ const FULL_SHA = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const RELEASE_ID = /^scai-candidate-[0-9]{4}-[0-9]{2}-[0-9]{2}\.[0-9]+$/;
 const HTTPS = /^https:\/\//;
-// Org-Umzug (TJ 2026-10-30): Pins dürfen auf subunit-ai/<repo> (historisch, weitergeleitet)
+// Org-Umzug (30.10.2026): Pins dürfen auf subunit-ai/<repo> (historisch, weitergeleitet)
 // oder Subunit-UG/<repo> zeigen; der Owner kommt nur aus der gemeinsamen Allowlist.
 const GITHUB_REPOSITORY_URL = /^https:\/\/github\.com\/([A-Za-z0-9-]+)\/[A-Za-z0-9._-]+$/;
 const isApprovedRepositoryUrl = (value) => {

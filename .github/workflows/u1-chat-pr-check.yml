@@ -7,7 +7,7 @@
 # u1-chat-Job aus fleet-source-check.yml (release-ID-frei, pro PR).
 
 name: u1-chat PR Check (private source)
-run-name: "u1-chat PR Check ${{ inputs.source_sha }}"   # u1-gate findet den Lauf zum exakten Head (Mauer 29.10.)
+run-name: "u1-chat PR Check ${{ inputs.source_sha }}"   # das Gate findet den Lauf zum exakten Head (seit 29.10.2026)
 
 on:
   workflow_dispatch:

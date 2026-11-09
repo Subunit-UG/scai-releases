@@ -43,7 +43,7 @@ if [ -n "$component_tag" ] && ! printf '%s' "$component_tag" | grep -Eq '^v(0|[1
   exit 64
 fi
 
-# Kanonische Pfade nach dem Org-Umzug (TJ 2026-10-30). Der Komponentenname links bleibt
+# Kanonische Pfade nach dem Org-Umzug (30.10.2026). Der Komponentenname links bleibt
 # der Zielordner private/<component>; Deploy-Keys hängen am Repo, nicht am Pfad.
 case "$component:$source_repo" in
   u1-chat:git@github.com:Subunit-UG/infra-u1-chat.git) ;;
