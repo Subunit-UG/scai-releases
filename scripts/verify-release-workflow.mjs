@@ -135,6 +135,8 @@ export function validateReleaseWorkflow(workflow) {
   require(has(/needs:\s*\[release, build\][\s\S]{0,180}?needs\.build\.result == 'success'/), "evidence job must depend on successful release and build jobs");
   require(has(/Fleet-Release-ID: \$RELEASE_ID/), "draft must be bound to the Fleet release ID");
   require(has(/Distribution-Policy: \$DISTRIBUTION_POLICY/), "draft must be bound to the distribution policy");
+  // Der Release-Text ist öffentlich: keine private Quell-Referenz (Branch-Namen) und kein inputs.ref im Text.
+  require(!has(/Source-Ref:|SOURCE_REF:/), "public release notes must not carry the private source ref");
   require(has(/if \[ "\$PUBLISH_UPDATE" != "true" \]; then[\s\S]{0,220}?exit 0/), "updater publication must require the explicit publish_update input");
   require(has(/REMOTE_MAIN=.*git ls-remote[\s\S]{0,520}?test "\$REMOTE_MAIN" = "\$SOURCE_SHA"/), "updater publication must require source main to equal the built SHA");
   require(has(/REMOTE_TAG=.*git ls-remote[\s\S]{0,520}?test "\$REMOTE_TAG" = "\$SOURCE_SHA"/), "updater publication must require the source tag to equal the built SHA");

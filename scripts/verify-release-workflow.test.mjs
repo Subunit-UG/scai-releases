@@ -33,6 +33,12 @@ test("build and publish reject prefix-only draft identity checks", () => {
   assert.match(validatePublishWorkflow(unsafePublish, contractPaths).join("\n"), /match complete binding lines/);
 });
 
+test("public release notes cannot carry the private source ref", () => {
+  const leaking = fixture.replace("          Source-SHA: $SOURCE_SHA\n", "          Source-Ref: $SOURCE_REF\n          Source-SHA: $SOURCE_SHA\n");
+  assert.notEqual(leaking, fixture);
+  assert.ok(validateReleaseWorkflow(leaking).some((fehler) => /private source ref/.test(fehler)));
+});
+
 test("a public pre-build release is rejected", () => {
   const unsafe = fixture.replace("--draft \\", "--not-a-draft \\");
   assert.match(validateReleaseWorkflow(unsafe).join("\n"), /release must be created as a draft/);
