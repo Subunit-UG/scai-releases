@@ -281,7 +281,6 @@ jobs:
           TAG: ${{ steps.ermitteln.outputs.tag }}
           PRERELEASE: ${{ inputs.prerelease }}
           SOURCE_SHA: ${{ steps.ermitteln.outputs.source_sha }}
-          SOURCE_REF: ${{ inputs.ref }}
           RELEASE_ID: ${{ inputs.release_id }}
           DISTRIBUTION_POLICY: ${{ inputs.distribution_policy }}
         run: |
@@ -322,12 +321,11 @@ jobs:
             --title "SCAI $TAG" \
             --notes "SCAI $TAG — Installer für macOS (Apple Silicon & Intel), Windows (x64 & ARM64) und Linux.
 
-          Source-Ref: $SOURCE_REF
           Source-SHA: $SOURCE_SHA
           Fleet-Release-ID: $RELEASE_ID
           Distribution-Policy: $DISTRIBUTION_POLICY
 
-          Auto-Update ist für alle Plattformen verdrahtet (\`latest.json\`). \`legacy-v0.125\` bedeutet: macOS Apple-Development-signiert, nicht notarisiert; Windows ohne Authenticode. Dieser Workflow veröffentlicht niemals." \
+          Auto-Update ist für alle Plattformen verdrahtet (\`latest.json\`). \`legacy-v0.125\` bedeutet: macOS Apple-Development-signiert, nicht notarisiert; Windows ohne Authenticode." \
             "${FLAGS[@]}"
           echo "Draft $TAG angelegt — öffentlich wird er erst nach allen Gates."
 
