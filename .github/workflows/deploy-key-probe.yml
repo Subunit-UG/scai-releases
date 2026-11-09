@@ -1,0 +1,49 @@
+# Deploy-Key-Wächter (Vorfall 2026-11-08-ci-deploy-keys-verschwunden): Am 08.11. verschwanden die öffentlichen
+# Gegenstücke der Nur-Lese-Deploy-Keys in 9 von 10 privaten Quell-Repos still; aufgefallen ist es erst, als ein Gate
+# rot wurde. Täglich (und von Hand) prüft dieser Lauf je Secret, ob es sein Repo noch lesen kann (git ls-remote).
+# Ausgabe nur PASS/FAIL, nie Refs oder Schlüsselmaterial. Das Ergebnis liest der Mac täglich (u1-marken-pruefung).
+
+name: Deploy-Key-Wächter
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-key-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: ${{ matrix.secret }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { secret: SOURCE_DEPLOY_KEY, repository: Subunit-UG/scai-app }
+          - { secret: AUTH_SOURCE_DEPLOY_KEY, repository: Subunit-UG/infra-auth }
+          - { secret: U1_CHAT_SOURCE_DEPLOY_KEY, repository: Subunit-UG/infra-u1-chat }
+          - { secret: ATLAS_SOURCE_DEPLOY_KEY, repository: Subunit-UG/infra-atlas }
+          - { secret: ECHO_SOURCE_DEPLOY_KEY, repository: Subunit-UG/echo-server }
+          - { secret: NOTCH_SOURCE_DEPLOY_KEY, repository: Subunit-UG/mac-notch }
+          - { secret: ZENTRALE_SOURCE_DEPLOY_KEY, repository: Subunit-UG/notch-zentrale }
+          - { secret: SONAR_SOURCE_DEPLOY_KEY, repository: Subunit-UG/sonar-tauri }
+          - { secret: BRIDGE_SOURCE_DEPLOY_KEY, repository: Subunit-UG/bridge-tauri }
+          - { secret: TRACE_SOURCE_DEPLOY_KEY, repository: Subunit-UG/trace-tauri }
+    steps:
+      - name: Öffentliche Gate-Tools auschecken
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2, immutable
+        with:
+          persist-credentials: false
+      - name: Lesezugriff prüfen
+        env:
+          SOURCE_DEPLOY_KEY: ${{ secrets[matrix.secret] }}
+          PROBE_SECRET: ${{ matrix.secret }}
+          PROBE_REPOSITORY: ${{ matrix.repository }}
+        run: bash scripts/probe-deploy-key.sh "$PROBE_SECRET" "$PROBE_REPOSITORY"
