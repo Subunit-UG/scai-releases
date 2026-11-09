@@ -870,6 +870,13 @@ jobs:
             *) MAC_ARCHIVE_LABEL="" ;;
           esac
           if [ -n "$MAC_ARCHIVE_LABEL" ]; then
+            # Seit macOS 26 kommt das App-Icon als Contents/Resources/Assets.car mit
+            # CFBundleIconName. Fehlt es trotz Deklaration in bundle.icon, ueberspringt
+            # Tauri das nur mit einer Logzeile und die App zeigt still das alte Icon:
+            # vor jedem Upload fail-closed pruefen (Quellen ohne Systemicon bleiben gruen).
+            MAC_APP=$(find "$BUNDLE_ROOT/macos" -maxdepth 1 -type d -name '*.app' -print -quit)
+            test -n "$MAC_APP"
+            python3 "$GITHUB_WORKSPACE/gate/scripts/verify-macos-app-icon.py" src-tauri/tauri.conf.json "$MAC_APP"
             # Tauri nennt beide Matrix-Archive standardmäßig SCAI.app.tar.gz. Ohne
             # Normalisierung überschreibt der zweite Upload den ersten im gemeinsamen
             # Draft. Die historischen Updater-Namen tragen deshalb die Architektur.
