@@ -29,6 +29,7 @@ case "$secret:$repository" in
   SONAR_SOURCE_DEPLOY_KEY:Subunit-UG/sonar-tauri) ;;
   BRIDGE_SOURCE_DEPLOY_KEY:Subunit-UG/bridge-tauri) ;;
   TRACE_SOURCE_DEPLOY_KEY:Subunit-UG/trace-tauri) ;;
+  OS_SOURCE_DEPLOY_KEY:Subunit-UG/os-app) ;;
   *)
     echo "secret/repository is not allowlisted" >&2
     exit 64

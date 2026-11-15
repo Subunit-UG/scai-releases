@@ -78,3 +78,8 @@ jobs:
         env:
           SOURCE_DEPLOY_KEY: ${{ secrets.TRACE_SOURCE_DEPLOY_KEY }}
         run: bash scripts/probe-deploy-key.sh TRACE_SOURCE_DEPLOY_KEY Subunit-UG/trace-tauri
+      - name: OS_SOURCE_DEPLOY_KEY → Subunit-UG/os-app
+        if: ${{ !cancelled() }}
+        env:
+          SOURCE_DEPLOY_KEY: ${{ secrets.OS_SOURCE_DEPLOY_KEY }}
+        run: bash scripts/probe-deploy-key.sh OS_SOURCE_DEPLOY_KEY Subunit-UG/os-app

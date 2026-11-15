@@ -1,0 +1,401 @@
+name: Subunit OS Signed Build (private source)
+
+# Baut und signiert die Desktop-App Subunit OS fuer macOS (universell: Apple-Chip
+# und Intel) aus einem exakt gepinnten Commit des privaten Quell-Repos. Zwei Jobs
+# auf getrennten Runnern:
+#   build  baut ohne Signatur. Quellzugang ist ein read-only Deploy-Key fuer genau
+#          dieses Repo. Der Job kennt keine Signier-Geheimnisse und uebergibt das
+#          Bundle als Umschlag, den nur der Signier-Job oeffnen kann.
+#   sign   fuehrt keinen Baucode aus. Er oeffnet den Umschlag, signiert mit Developer
+#          ID (Hardened Runtime, sicherer Zeitstempel), laesst Apple notarisieren und
+#          heftet das Ticket an.
+# Das Bundle verlaesst die Runner nur als verschluesselter Umschlag, am Ende an einen
+# Einmal-Empfaengerschluessel. Bau- und Compiler-Ausgaben bleiben in fluechtigen
+# Dateien (run-confidential.sh). Dieser Lauf veroeffentlicht nichts.
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Vollstaendiger os-app-Commit-SHA"
+        required: true
+        type: string
+      version:
+        description: "Erwartete CFBundleShortVersionString (z. B. 0.1.0)"
+        required: true
+        type: string
+      recipient_public_key_base64:
+        description: "Einmal-RSA-Public-Key (PEM, base64, >= 3072 Bit) fuer den verschluesselten Umschlag"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: os-build-${{ inputs.source_sha }}
+  cancel-in-progress: true
+
+env:
+  SOURCE_SHA: ${{ inputs.source_sha }}
+  EXPECTED_VERSION: ${{ inputs.version }}
+  RECIPIENT_PUBLIC_KEY_BASE64: ${{ inputs.recipient_public_key_base64 }}
+  EXPECTED_TEAM: 8V35FVMFT9
+  EXPECTED_IDENTIFIER: ai.subunit.os
+  APP_NAME: Subunit OS
+
+jobs:
+  build:
+    name: Subunit OS bauen (ohne Signatur)
+    runs-on: macos-latest
+    timeout-minutes: 75
+    outputs:
+      handover_sha256: ${{ steps.handover.outputs.sha256 }}
+    steps:
+      - name: Oeffentliche Gate-Tools auschecken
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2, immutable
+        with:
+          path: gate
+          persist-credentials: false
+
+      - name: Commit-Pin und Version pruefen
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$SOURCE_SHA" | grep -Eq '^[0-9a-f]{40}$'
+          printf '%s' "$EXPECTED_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+          node -e 'const k=require("node:crypto").createPublicKey(Buffer.from(process.env.RECIPIENT_PUBLIC_KEY_BASE64,"base64").toString("utf8")); if(k.asymmetricKeyType!=="rsa"||k.asymmetricKeyDetails.modulusLength<3072){process.exit(1)}'
+          echo "PASS os-source-pin (source-sha=$SOURCE_SHA version=$EXPECTED_VERSION)"
+
+      # Werkzeuge kommen vor dem privaten Checkout: Keine fremde Action laeuft, waehrend Quelltext im Arbeitsordner liegt.
+      - name: Node einrichten (vor privatem Checkout)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4, immutable
+        with:
+          node-version: 22
+
+      - name: Rust einrichten (vor privatem Checkout)
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Subunit OS exakt und read-only auschecken
+        env:
+          SOURCE_DEPLOY_KEY: ${{ secrets.OS_SOURCE_DEPLOY_KEY }}
+        run: bash gate/scripts/checkout-private-source.sh subunit-os git@github.com:Subunit-UG/os-app.git "$SOURCE_SHA"
+
+      - name: Checkout-Credentials vor weiteren Schritten entfernen
+        if: always()
+        shell: bash
+        run: bash gate/scripts/checkout-private-source.sh --cleanup-credentials
+
+      - name: Quellstand pruefen
+        working-directory: private/subunit-os
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$SOURCE_SHA" ] || { echo "::error::Ausgecheckter Stand passt nicht zum Pin"; exit 1; }
+          if git config --get-regexp '^http\..*extraheader' >/dev/null; then echo "::error::Zugangsdaten im Checkout"; exit 1; fi
+          echo "PASS os-source (head=$SOURCE_SHA)"
+
+      - name: Bundle bauen (ohne Signatur)
+        id: os_build
+        working-directory: private/subunit-os
+        env:
+          # Fehlerausgabe nur verschluesselt an den Einmal-Schluessel.
+          SCAI_ENCRYPTED_DIAGNOSTIC_PUBLIC_KEY_BASE64: ${{ inputs.recipient_public_key_base64 }}
+          SCAI_ENCRYPTED_DIAGNOSTIC_PATH: ${{ runner.temp }}/os-build-diagnostic.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" os-build ./betrieb/mac/bauen.sh bauen
+
+      - name: Verschluesselte Bau-Diagnose hochladen
+        if: failure() && steps.os_build.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: subunit-os-encrypted-diagnostic-${{ inputs.source_sha }}
+          path: ${{ runner.temp }}/os-build-diagnostic.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Bundle pruefen und fuer den Signier-Job verschluesseln
+        id: handover
+        working-directory: private/subunit-os
+        env:
+          # Oeffentlicher Teil des Uebergabe-Schluessels (RSA 4096, PEM in base64). Den geheimen Teil kennt nur die Umgebung release.
+          HANDOVER_PUBLIC_KEY_BASE64: LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQ0lqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FnOEFNSUlDQ2dLQ0FnRUEyR3BpTlJQc1dSc0U4SkxRZjZZbApFQkhVZ1BoMm1vcFJRRHF6V3UwTnl1dkVBMEh0RzduaU4zNWVKaHpqNGt2M0pZWnVBV013cDhJTGJHRkZjdFp6CnFoSG5kSVRnbFNTZWxNaCtjTG9VdUhsb0JXbWMzK3hlVVRsTUlLWEVzajBtT2V6c1N6dndLSnJRSlRFYlk0K0cKa0gxUXdpdXUrNlBVUkZvSEdEWlg1Z1c0MjZnSVM3QkNuUVJucllVMXQzR05hRUlXOFlmNlgvL0xTdHVXOEFaYQpmaC9iN0RLRmhlb0JDR0J5OThWenovRHNVdW5mOHRaZ1IxNXQwQTVjVjZLK1llVHd4SnZoRThoSWUzYzBsRXFjCnNtUG9MajJiUW5LK0kvTFF2Nmp2dEMxdTJUd1BGbDJPUXR2RUpQTzhla0FDTmROdEVCb2RBRVV5cit4RG9QTFgKWFQ5bFB1ZkJwS1ZPcldVcS9pcTI2aXhXOHZjbFZ1b3hYUXl1M2xKUEdKNy9NMmdNbzRsd0RwUEtTcWl3UWljSgpXMmlRK1VKcGhxaFNMOUlWQ2ptR1R2aDUrWDRJaHlwWVFPQVRzN2hpNXpFcDlURGNmZEZjc3lYVmU0ZzRlMHhnCitMdUJhQUVQeVA1K25nUHZXZTd2MEQwdEY3c3F1Yk9wS2hKUHN3U1hVWUltTnJtdHdXZXBoN2l6M1VVdDZwWFUKMXkvcDR2Sjg5OEhnT0VKSklBMUxTdVhYUnljUVd2OS9SbGNqUklYbG0yMXFPc2psUjU1NzlZTGRab0lCWTQ1ZgpVeSt3Y0ZjUmRvSDVVbWV1Sm14VGJaYjRDYkR6alZuUm5yUVNjejhtMXBRcnhVNTlxNmtDMmFXaHlkczJMNENLCmxOTlgwVmhTOUdRYVVONzMzZXRmcmQ4Q0F3RUFBUT09Ci0tLS0tRU5EIFBVQkxJQyBLRVktLS0tLQo=
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/$APP_NAME.app"
+          plist="$app/Contents/Info.plist"
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")
+          [ "$version" = "$EXPECTED_VERSION" ] || { echo "::error::Bundle-Version $version passt nicht zu $EXPECTED_VERSION."; exit 1; }
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = "$EXPECTED_IDENTIFIER" ] || { echo "::error::Bundle-ID"; exit 1; }
+          plain="$RUNNER_TEMP/os-plain"
+          out="$RUNNER_TEMP/os-handover"
+          mkdir -p "$plain" "$out"
+          [ -z "$(find "$app" -type l -print -quit)" ] || { echo "::error::Bundle enthaelt symbolische Verweise."; exit 1; }
+          ditto -c -k --norsrc --keepParent "$app" "$plain/unsigned.zip"
+          node "$GITHUB_WORKSPACE/gate/scripts/encrypt-confidential-log.mjs" \
+            "$plain/unsigned.zip" "$out/unsigned.zip.envelope.json" "$HANDOVER_PUBLIC_KEY_BASE64"
+          rm -rf "$plain"
+          echo "sha256=$(shasum -a 256 "$out/unsigned.zip.envelope.json" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "PASS os-handover (version=$version, plaintext nur im Umschlag)"
+
+      - name: Umschlag an den Signier-Job uebergeben
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: subunit-os-handover-${{ inputs.source_sha }}
+          path: ${{ runner.temp }}/os-handover/
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Arbeitsordner leeren
+        if: always()
+        shell: bash
+        run: rm -rf "$GITHUB_WORKSPACE/private" "$RUNNER_TEMP/os-plain" "$RUNNER_TEMP/os-handover"
+
+  sign:
+    name: Subunit OS signieren und notarisieren
+    needs: build
+    environment: release
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - name: Oeffentliche Gate-Tools auschecken
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2, immutable
+        with:
+          path: gate
+          persist-credentials: false
+
+      - name: Umschlag des Bau-Jobs holen
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: subunit-os-handover-${{ inputs.source_sha }}
+          path: ${{ runner.temp }}/os-handover
+
+      - name: Umschlag pruefen und oeffnen
+        env:
+          OS_HANDOVER_PRIVATE_KEY: ${{ secrets.OS_HANDOVER_PRIVATE_KEY }}
+          HANDOVER_SHA256: ${{ needs.build.outputs.handover_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          if [ -z "${OS_HANDOVER_PRIVATE_KEY:-}" ]; then echo "::error::Uebergabe-Schluessel fehlt."; exit 1; fi
+          envelope="$RUNNER_TEMP/os-handover/unsigned.zip.envelope.json"
+          # Genau der Umschlag, den der Bau-Job gemeldet hat.
+          printf '%s' "$HANDOVER_SHA256" | grep -Eq '^[0-9a-f]{64}$' || { echo "::error::Digest des Umschlags fehlt."; exit 1; }
+          [ "$(find "$RUNNER_TEMP/os-handover" -mindepth 1 | wc -l | tr -d ' ')" = 1 ] && [ -f "$envelope" ] && [ ! -L "$envelope" ] || { echo "::error::Uebergabe enthaelt nicht genau den Umschlag."; exit 1; }
+          [ "$(shasum -a 256 "$envelope" | cut -d' ' -f1)" = "$HANDOVER_SHA256" ] || { echo "::error::Umschlag passt nicht zum Digest des Bau-Jobs."; exit 1; }
+          key="$RUNNER_TEMP/os-handover.pem"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$OS_HANDOVER_PRIVATE_KEY" > "$key"
+          work="$RUNNER_TEMP/os-work"
+          rm -rf "$work"
+          mkdir -p "$work"
+          node gate/scripts/decrypt-confidential-envelope.mjs "$envelope" "$work/unsigned.zip" "$key"
+          rm -f "$key"
+          echo "PASS os-handover-opened"
+
+      # Ohne Geheimnisse: Der Inhalt des Umschlags ist Eingabe aus dem Bau-Job.
+      - name: Bundle auspacken und pruefen
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/os-work"
+          python3 -I gate/scripts/extract-app-bundle.py "$work/unsigned.zip" "$work/app" "$APP_NAME.app"
+          rm -f "$work/unsigned.zip"
+          app="$work/app/$APP_NAME.app"
+          [ -d "$app" ] && [ ! -L "$app" ] || { echo "::error::Bundle fehlt im Umschlag."; exit 1; }
+          [ -z "$(find "$work/app" -type l -print -quit)" ] || { echo "::error::Bundle enthaelt symbolische Verweise."; exit 1; }
+          plist="$app/Contents/Info.plist"
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")
+          [ "$version" = "$EXPECTED_VERSION" ] || { echo "::error::Bundle-Version $version passt nicht zu $EXPECTED_VERSION."; exit 1; }
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = "$EXPECTED_IDENTIFIER" ] || { echo "::error::Bundle-ID"; exit 1; }
+          main="$app/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")"
+          [ -f "$main" ] || { echo "::error::Hauptprogramm fehlt."; exit 1; }
+          archs=" $(lipo -archs "$main") "
+          case "$archs" in *" arm64 "*) ;; *) echo "::error::arm64 fehlt"; exit 1 ;; esac
+          case "$archs" in *" x86_64 "*) ;; *) echo "::error::x86_64 fehlt"; exit 1 ;; esac
+          test -s "$app/Contents/Resources/LIZENZEN-DRITTER.txt" || { echo "::error::Lizenzhinweise fehlen im Bundle."; exit 1; }
+          echo "OS_APP=$app" >> "$GITHUB_ENV"
+          echo "PASS os-bundle-checked (version=$version)"
+
+      - name: Signier-Identitaet in temporaeren Schluesselbund laden
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_DEVID_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVID_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_DEVID_SIGNING_IDENTITY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          if [ -z "${APPLE_CERTIFICATE:-}" ] || [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            echo "::error::Developer-ID-Secrets (APPLE_DEVID_*) fehlen oder sind unvollstaendig."
+            exit 1
+          fi
+          # Nur Developer ID: Eine andere Zertifikatsart bricht ab, statt still ein internes Bundle zu liefern.
+          case "$APPLE_SIGNING_IDENTITY" in
+            "Developer ID Application:"*) ;;
+            *) echo "::error::Signier-Identitaet ist keine Developer ID Application."; exit 1 ;;
+          esac
+          p12="$RUNNER_TEMP/os-sign.p12"
+          kc="$RUNNER_TEMP/os-build.keychain-db"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$p12"
+          kc_pw="$(openssl rand -hex 24)"
+          security create-keychain -p "$kc_pw" "$kc"
+          security set-keychain-settings -lut 1800 "$kc"
+          security unlock-keychain -p "$kc_pw" "$kc"
+          security import "$p12" -k "$kc" -P "${APPLE_CERTIFICATE_PASSWORD:-}" -T /usr/bin/codesign > /dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kc_pw" "$kc" > /dev/null
+          # Bestehende Schluesselbunde bleiben in der Suchliste; Pfade zeilenweise, ohne Wortteilung.
+          existing=()
+          while IFS= read -r line; do
+            line="${line#"${line%%[![:space:]]*}"}"; line="${line#\"}"; line="${line%\"}"
+            [ -n "$line" ] && existing+=("$line")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$kc" ${existing[@]+"${existing[@]}"}
+          rm -f "$p12"
+          security find-identity -v -p codesigning "$kc" | tail -1
+          echo "OS_KEYCHAIN=$kc" >> "$GITHUB_ENV"
+
+      - name: Bundle signieren
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_DEVID_SIGNING_IDENTITY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$OS_APP"
+          main="$app/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")"
+          sign() { /usr/bin/codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$1"; }
+          # Von innen nach aussen: jedes weitere ausfuehrbare Teil, zuletzt das Bundle mit dem Hauptprogramm.
+          while IFS= read -r -d '' part; do
+            [ "$part" = "$main" ] && continue
+            if file -b "$part" | grep -q 'Mach-O'; then sign "$part"; fi
+          done < <(find "$app/Contents" -type f -print0)
+          sign "$app"
+          /usr/bin/codesign --verify --strict --deep "$app"
+          # Die Identitaet wird nach dem Signieren nicht mehr gebraucht.
+          security delete-keychain "$OS_KEYCHAIN"
+          echo "OS_KEYCHAIN=" >> "$GITHUB_ENV"
+          echo "PASS os-signed"
+
+      - name: Signatur, Version und Team pruefen
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$OS_APP"
+          plist="$app/Contents/Info.plist"
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")
+          [ "$version" = "$EXPECTED_VERSION" ] || { echo "::error::Bundle-Version $version passt nicht zu $EXPECTED_VERSION."; exit 1; }
+          codesign --verify --strict --deep "$app"
+          # Jedes ausfuehrbare Teil: dieses Team, Hardened Runtime, sicherer Zeitstempel.
+          parts=0
+          while IFS= read -r -d '' part; do
+            file -b "$part" | grep -q 'Mach-O' || continue
+            parts=$((parts + 1))
+            info=$(codesign -dvvv "$part" 2>&1)
+            team=$(printf '%s\n' "$info" | sed -n 's/^TeamIdentifier=//p')
+            [ "$team" = "$EXPECTED_TEAM" ] || { echo "::error::Unerwartetes Team an einem Teil des Bundles."; exit 1; }
+            printf '%s\n' "$info" | grep -Eq '^CodeDirectory .*flags=0x[0-9a-f]*\(.*runtime' || { echo "::error::Hardened Runtime fehlt an einem Teil des Bundles."; exit 1; }
+            printf '%s\n' "$info" | grep -q '^Timestamp=' || { echo "::error::Sicherer Zeitstempel fehlt an einem Teil des Bundles."; exit 1; }
+          done < <(find "$app/Contents" -type f -print0)
+          [ "$parts" -ge 1 ] || { echo "::error::Kein ausfuehrbares Teil im Bundle gefunden."; exit 1; }
+          [ "$(codesign -dv "$app" 2>&1 | sed -n 's/^Identifier=//p')" = "$EXPECTED_IDENTIFIER" ] || { echo "::error::Signatur-Kennung"; exit 1; }
+          echo "PASS os-signature (version=$version team=$EXPECTED_TEAM parts=$parts)"
+
+      - name: Bei Apple notarisieren und Ticket anheften
+        env:
+          APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          if [ -z "${APPLE_NOTARY_KEY:-}" ] || [ -z "${APPLE_NOTARY_KEY_ID:-}" ] || [ -z "${APPLE_NOTARY_ISSUER_ID:-}" ]; then
+            echo "::error::Notarisierungs-Schluessel fehlt — kein ungeprueftes Bundle."
+            exit 1
+          fi
+          notary="$RUNNER_TEMP/os-notary"
+          mkdir -p "$notary"
+          key="$notary/AuthKey.p8"
+          printf '%s\n' "$APPLE_NOTARY_KEY" > "$key"
+          trap 'rm -f "$key"' EXIT
+          app="$OS_APP"
+          submit="$notary/SubunitOS-submit.zip"
+          ditto -c -k --keepParent "$app" "$submit"
+          xcrun notarytool submit "$submit" --key "$key" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER_ID" \
+            --wait --timeout 40m --output-format json > "$notary/submit.json" 2> "$notary/submit.err" || true
+          status=$(node -e 'try{const j=require(process.argv[1]);process.stdout.write(String(j.status||""))}catch{}' "$notary/submit.json")
+          sub_id=$(node -e 'try{const j=require(process.argv[1]);process.stdout.write(String(j.id||""))}catch{}' "$notary/submit.json")
+          # Das ausfuehrliche Apple-Protokoll nennt Dateipfade: es geht nur in den Umschlag.
+          if [ -n "$sub_id" ]; then
+            xcrun notarytool log "$sub_id" --key "$key" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER_ID" \
+              "$notary/notary-log.json" > /dev/null 2>&1 || true
+          fi
+          rm -f "$submit" "$key"
+          echo "NOTARY_SUBMISSION=$sub_id" >> "$GITHUB_ENV"
+          if [ "$status" != "Accepted" ]; then
+            echo "::error::Notarisierung nicht angenommen (Status: ${status:-unbekannt}). Protokoll liegt im Umschlag."
+            echo "NOTARY_FAILED=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          xcrun stapler staple "$app" > /dev/null
+          xcrun stapler validate "$app" > /dev/null
+          spctl --assess --type execute -vv "$app" 2>&1 | grep -q 'source=Notarized Developer ID' || {
+            echo "::error::Gatekeeper erkennt das Bundle nicht als notarisiert."
+            exit 1
+          }
+          echo "PASS os-notarized (submission=$sub_id, Ticket angeheftet, Gatekeeper ok)"
+
+      - name: Archiv verschluesseln
+        id: seal
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$SOURCE_SHA" | grep -Eq '^[0-9a-f]{40}$'
+          plain="$RUNNER_TEMP/os-plain"
+          out="$RUNNER_TEMP/os-out"
+          mkdir -p "$plain" "$out"
+          archive="$plain/SubunitOS-$EXPECTED_VERSION.zip"
+          if [ "${NOTARY_FAILED:-0}" = 1 ]; then
+            # Abgelehnt: nur das Apple-Protokoll verlaesst den Runner, nie ein Bundle.
+            archive="$plain/notary-log-$EXPECTED_VERSION.zip"
+            ditto -c -k "$RUNNER_TEMP/os-notary" "$archive"
+          else
+            ditto -c -k --keepParent "$OS_APP" "$archive"
+          fi
+          sha=$(shasum -a 256 "$archive" | cut -d' ' -f1)
+          node gate/scripts/encrypt-confidential-log.mjs \
+            "$archive" "$out/$(basename "$archive").envelope.json" "$RECIPIENT_PUBLIC_KEY_BASE64"
+          rm -rf "$plain"
+          printf '{"source_sha":"%s","version":"%s","signing":"developer-id","archive_sha256":"%s","notary_submission":"%s","notarized":%s}\n' \
+            "$SOURCE_SHA" "$EXPECTED_VERSION" "$sha" "${NOTARY_SUBMISSION:-}" "$([ "${NOTARY_FAILED:-0}" = 1 ] && echo false || echo true)" > "$out/build-receipt.json"
+          echo "sealed=1" >> "$GITHUB_OUTPUT"
+          echo "PASS os-envelope (plaintext nur im Umschlag)"
+
+      - name: Artefakt hochladen
+        if: always() && steps.seal.outputs.sealed == '1'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
+        with:
+          name: subunit-os-${{ inputs.version }}
+          path: ${{ runner.temp }}/os-out/
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Notarisierung muss angenommen sein
+        if: env.NOTARY_FAILED == '1'
+        run: |
+          echo "::error::Apple hat das Bundle nicht notarisiert; Protokoll im Umschlag ansehen."
+          exit 1
+
+      - name: Schluesselbund und Arbeitsordner entfernen
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${OS_KEYCHAIN:-}" ]; then security delete-keychain "$OS_KEYCHAIN" || true; fi
+          rm -rf "$RUNNER_TEMP/os-work" "$RUNNER_TEMP/os-plain" "$RUNNER_TEMP/os-notary" "$RUNNER_TEMP/os-handover" "$RUNNER_TEMP/os-handover.pem"

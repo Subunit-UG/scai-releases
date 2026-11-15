@@ -56,6 +56,7 @@ case "$component:$source_repo" in
   sonar-tauri:git@github.com:Subunit-UG/sonar-tauri.git) ;;
   bridge-tauri:git@github.com:Subunit-UG/bridge-tauri.git) ;;
   trace-tauri:git@github.com:Subunit-UG/trace-tauri.git) ;;
+  subunit-os:git@github.com:Subunit-UG/os-app.git) ;;
   *)
     echo "component/repository is not allowlisted" >&2
     exit 64

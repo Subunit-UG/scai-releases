@@ -120,6 +120,9 @@ test("repository allowlist, immutable SHA and dedicated key fail closed", () => 
     [["subunit-notch", "git@github.com:Subunit-UG/notch-zentrale.git", SHA], 64, /not allowlisted/],
     [["subunit-scai", "git@github.com:Subunit-UG/scai-app.git", SHA], 65, /deploy key is missing/],
     [["subunit-scai", "git@github.com:Subunit-UG/infra-atlas.git", SHA], 64, /not allowlisted/],
+    [["subunit-os", "git@github.com:Subunit-UG/os-app.git", SHA], 65, /deploy key is missing/],
+    [["subunit-os", "git@github.com:Subunit-UG/scai-app.git", SHA], 64, /not allowlisted/],
+    [["subunit-scai", "git@github.com:Subunit-UG/os-app.git", SHA], 64, /not allowlisted/],
   ]) {
     const result = invoke(args);
     assert.equal(result.status, expectedStatus);
@@ -136,6 +139,7 @@ const CANONICAL_SOURCES = {
   "subunit-scai": "Subunit-UG/scai-app", echo: "Subunit-UG/echo-server", "subunit-notch": "Subunit-UG/mac-notch",
   "notch-zentrale": "Subunit-UG/notch-zentrale",
   "sonar-tauri": "Subunit-UG/sonar-tauri", "bridge-tauri": "Subunit-UG/bridge-tauri", "trace-tauri": "Subunit-UG/trace-tauri",
+  "subunit-os": "Subunit-UG/os-app",
 };
 for (const [component, repository] of Object.entries(CANONICAL_SOURCES)) test(`Org-Umzug: ${component} nur über ${repository}`, () => {
   const name = repository.split("/")[1];
