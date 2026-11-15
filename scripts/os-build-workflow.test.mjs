@@ -53,6 +53,16 @@ test("os-build: der Signier-Job öffnet nur den gemeldeten Umschlag und packt oh
   assert.doesNotMatch(unpack, /\n        env:/);
   assert.match(unpack, /python3 -I gate\/scripts\/extract-app-bundle\.py "\$work\/unsigned\.zip" "\$work\/app" "\$APP_NAME\.app"\n/);
   assert.doesNotMatch(sign, /ditto -x|unzip|tar -x/);
+  // Was aus dem Bundle gelesen wird, steht nie im Protokoll; der Name des Hauptprogramms ist ein einfacher Dateiname.
+  assert.doesNotMatch(workflow, /echo "[^"\n]*\$(version|exe|main|archs|team|info)\b/);
+  assert.match(unpack, /printf '%s' "\$exe" \| grep -Eq '\^\[A-Za-z0-9\]\[A-Za-z0-9\._-\]\{0,63\}\$' \|\| \{[^\n]+exit 1; \}\n\s+main="\$app\/Contents\/MacOS\/\$exe"\n/);
+  // Die Zertifikatsdatei entsteht mit engen Rechten und verschwindet in jedem Ausgang des Schritts.
+  const keychain = step("Signier-Identitaet in temporaeren Schluesselbund laden");
+  const umask = keychain.indexOf("          umask 077\n");
+  const trap = keychain.indexOf("          trap 'rm -f \"$p12\"' EXIT\n");
+  const known = keychain.indexOf('          echo "OS_KEYCHAIN=$kc" >> "$GITHUB_ENV"\n');
+  const write = keychain.indexOf("base64 --decode > \"$p12\"");
+  assert.ok(umask > 0 && trap > umask && known > trap && write > known, "umask, trap und Vermerk des Schlüsselbunds stehen vor dem Schreiben");
   assert.ok(steps.findIndex((s) => s.startsWith("Bundle auspacken und pruefen\n")) < steps.findIndex((s) => s.startsWith("Signier-Identitaet in temporaeren Schluesselbund laden\n")));
 });
 

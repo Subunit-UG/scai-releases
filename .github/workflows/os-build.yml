@@ -129,7 +129,7 @@ jobs:
           app="apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/$APP_NAME.app"
           plist="$app/Contents/Info.plist"
           version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")
-          [ "$version" = "$EXPECTED_VERSION" ] || { echo "::error::Bundle-Version $version passt nicht zu $EXPECTED_VERSION."; exit 1; }
+          [ "$version" = "$EXPECTED_VERSION" ] || { echo "::error::Bundle-Version passt nicht zur erwarteten Version."; exit 1; }
           [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = "$EXPECTED_IDENTIFIER" ] || { echo "::error::Bundle-ID"; exit 1; }
           plain="$RUNNER_TEMP/os-plain"
           out="$RUNNER_TEMP/os-handover"
@@ -140,7 +140,7 @@ jobs:
             "$plain/unsigned.zip" "$out/unsigned.zip.envelope.json" "$HANDOVER_PUBLIC_KEY_BASE64"
           rm -rf "$plain"
           echo "sha256=$(shasum -a 256 "$out/unsigned.zip.envelope.json" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-          echo "PASS os-handover (version=$version, plaintext nur im Umschlag)"
+          echo "PASS os-handover (version=$EXPECTED_VERSION, plaintext nur im Umschlag)"
 
       - name: Umschlag an den Signier-Job uebergeben
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
@@ -204,6 +204,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          printf '%s' "$EXPECTED_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::Erwartete Version hat nicht die Form x.y.z."; exit 1; }
           work="$RUNNER_TEMP/os-work"
           python3 -I gate/scripts/extract-app-bundle.py "$work/unsigned.zip" "$work/app" "$APP_NAME.app"
           rm -f "$work/unsigned.zip"
@@ -212,16 +213,18 @@ jobs:
           [ -z "$(find "$work/app" -type l -print -quit)" ] || { echo "::error::Bundle enthaelt symbolische Verweise."; exit 1; }
           plist="$app/Contents/Info.plist"
           version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")
-          [ "$version" = "$EXPECTED_VERSION" ] || { echo "::error::Bundle-Version $version passt nicht zu $EXPECTED_VERSION."; exit 1; }
+          [ "$version" = "$EXPECTED_VERSION" ] || { echo "::error::Bundle-Version passt nicht zur erwarteten Version."; exit 1; }
           [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = "$EXPECTED_IDENTIFIER" ] || { echo "::error::Bundle-ID"; exit 1; }
-          main="$app/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")"
-          [ -f "$main" ] || { echo "::error::Hauptprogramm fehlt."; exit 1; }
+          exe=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")
+          printf '%s' "$exe" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' || { echo "::error::Name des Hauptprogramms ist kein einfacher Dateiname."; exit 1; }
+          main="$app/Contents/MacOS/$exe"
+          [ -f "$main" ] && [ ! -L "$main" ] || { echo "::error::Hauptprogramm fehlt."; exit 1; }
           archs=" $(lipo -archs "$main") "
           case "$archs" in *" arm64 "*) ;; *) echo "::error::arm64 fehlt"; exit 1 ;; esac
           case "$archs" in *" x86_64 "*) ;; *) echo "::error::x86_64 fehlt"; exit 1 ;; esac
           test -s "$app/Contents/Resources/LIZENZEN-DRITTER.txt" || { echo "::error::Lizenzhinweise fehlen im Bundle."; exit 1; }
           echo "OS_APP=$app" >> "$GITHUB_ENV"
-          echo "PASS os-bundle-checked (version=$version)"
+          echo "PASS os-bundle-checked (version=$EXPECTED_VERSION)"
 
       - name: Signier-Identitaet in temporaeren Schluesselbund laden
         env:
@@ -241,8 +244,11 @@ jobs:
             "Developer ID Application:"*) ;;
             *) echo "::error::Signier-Identitaet ist keine Developer ID Application."; exit 1 ;;
           esac
+          umask 077
           p12="$RUNNER_TEMP/os-sign.p12"
           kc="$RUNNER_TEMP/os-build.keychain-db"
+          trap 'rm -f "$p12"' EXIT
+          echo "OS_KEYCHAIN=$kc" >> "$GITHUB_ENV"
           printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$p12"
           kc_pw="$(openssl rand -hex 24)"
           security create-keychain -p "$kc_pw" "$kc"
@@ -259,7 +265,6 @@ jobs:
           security list-keychains -d user -s "$kc" ${existing[@]+"${existing[@]}"}
           rm -f "$p12"
           security find-identity -v -p codesigning "$kc" | tail -1
-          echo "OS_KEYCHAIN=$kc" >> "$GITHUB_ENV"
 
       - name: Bundle signieren
         env:
@@ -268,7 +273,9 @@ jobs:
         run: |
           set -euo pipefail
           app="$OS_APP"
-          main="$app/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")"
+          exe=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")
+          printf '%s' "$exe" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' || { echo "::error::Name des Hauptprogramms ist kein einfacher Dateiname."; exit 1; }
+          main="$app/Contents/MacOS/$exe"
           sign() { /usr/bin/codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$1"; }
           # Von innen nach aussen: jedes weitere ausfuehrbare Teil, zuletzt das Bundle mit dem Hauptprogramm.
           while IFS= read -r -d '' part; do
@@ -289,7 +296,7 @@ jobs:
           app="$OS_APP"
           plist="$app/Contents/Info.plist"
           version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")
-          [ "$version" = "$EXPECTED_VERSION" ] || { echo "::error::Bundle-Version $version passt nicht zu $EXPECTED_VERSION."; exit 1; }
+          [ "$version" = "$EXPECTED_VERSION" ] || { echo "::error::Bundle-Version passt nicht zur erwarteten Version."; exit 1; }
           codesign --verify --strict --deep "$app"
           # Jedes ausfuehrbare Teil: dieses Team, Hardened Runtime, sicherer Zeitstempel.
           parts=0
@@ -304,7 +311,7 @@ jobs:
           done < <(find "$app/Contents" -type f -print0)
           [ "$parts" -ge 1 ] || { echo "::error::Kein ausfuehrbares Teil im Bundle gefunden."; exit 1; }
           [ "$(codesign -dv "$app" 2>&1 | sed -n 's/^Identifier=//p')" = "$EXPECTED_IDENTIFIER" ] || { echo "::error::Signatur-Kennung"; exit 1; }
-          echo "PASS os-signature (version=$version team=$EXPECTED_TEAM parts=$parts)"
+          echo "PASS os-signature (version=$EXPECTED_VERSION team=$EXPECTED_TEAM parts=$parts)"
 
       - name: Bei Apple notarisieren und Ticket anheften
         env:
@@ -397,5 +404,5 @@ jobs:
         if: always()
         shell: bash
         run: |
-          if [ -n "${OS_KEYCHAIN:-}" ]; then security delete-keychain "$OS_KEYCHAIN" || true; fi
-          rm -rf "$RUNNER_TEMP/os-work" "$RUNNER_TEMP/os-plain" "$RUNNER_TEMP/os-notary" "$RUNNER_TEMP/os-handover" "$RUNNER_TEMP/os-handover.pem"
+          if [ -n "${OS_KEYCHAIN:-}" ] && [ -e "$OS_KEYCHAIN" ]; then security delete-keychain "$OS_KEYCHAIN" || true; fi
+          rm -rf "$RUNNER_TEMP/os-work" "$RUNNER_TEMP/os-plain" "$RUNNER_TEMP/os-notary" "$RUNNER_TEMP/os-handover" "$RUNNER_TEMP/os-handover.pem" "$RUNNER_TEMP/os-sign.p12"
