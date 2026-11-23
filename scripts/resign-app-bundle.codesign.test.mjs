@@ -182,6 +182,27 @@ test("Framework nennt ein Skript als sein Programm: abgewiesen, bevor signiert w
   rejected(tool(made), "bundle description does not match");
 });
 
+test("Beschreibung in der Fassung für eine Plattform nennt ein Skript: codesign folgt ihr, abgewiesen vor dem Signieren", options, async (t) => {
+  const script = (at) => { writeFileSync(at(`${FRAMEWORK}/Versions/A/skript`), SCRIPT); chmodSync(at(`${FRAMEWORK}/Versions/A/skript`), 0o755); };
+  const chosen = (made) => /^Executable=.*\/([^/\n]+)$/m.exec(real("-dv", made.at(FRAMEWORK)).stderr)?.[1];
+  await t.test("als eigene Datei neben der Info.plist", () => {
+    const made = build({ extra: (at) => { script(at); writeFileSync(at(`${FRAMEWORK}/Versions/A/Resources/Info-macos.plist`), plist("skript", "test.probe.framework", "FMWK")); } });
+    assert.equal(chosen(made), "skript", "der Bau hat damit das Skript signiert, nicht die Datei der Liste");
+    rejected(tool(made), "unexpected code in the bundle");
+  });
+  await t.test("als Schlüssel in der Info.plist", () => {
+    const made = build({
+      extra: (at) => {
+        script(at);
+        writeFileSync(at(`${FRAMEWORK}/Versions/A/Resources/Info.plist`),
+          plist("F", "test.probe.framework", "FMWK").replace("</dict>", "<key>CFBundleExecutable-macos</key><string>skript</string></dict>"));
+      },
+    });
+    assert.equal(chosen(made), "skript", "der Bau hat damit das Skript signiert, nicht die Datei der Liste");
+    rejected(tool(made), "bundle description does not match");
+  });
+});
+
 test("eingebettetes Bundle mit unbekannter Endung, vom Bau signiert: abgewiesen", options, () => {
   const made = build({
     extra: (at) => {

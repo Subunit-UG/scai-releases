@@ -236,6 +236,17 @@ refused("Verweis mit Zeilenumbruch im Namen", { prepare: ({ app }) => symlinkSyn
 refused("Programm mit Zeilenumbruch neben dem Programm der Liste", plus({
   [`${FRAMEWORK}/Versions/A/Resources/Info.plist`]: plist("test.probe.framework", "F\nx"), [`${FRAMEWORK}/Versions/A/F\nx`]: "#!/bin/sh\n",
 }), /^rejected: unexpected name in the bundle\n$/);
+refused("Beschreibung in der Fassung für eine Plattform neben der des Frameworks", plus({
+  [`${FRAMEWORK}/Versions/A/Resources/Info-macos.plist`]: plist("test.probe.framework", "skript"), [`${FRAMEWORK}/Versions/A/skript`]: "#!/bin/sh\n",
+}), /^rejected: unexpected code in the bundle\n$/);
+refused("Beschreibung in der Fassung für eine Plattform neben der der App, andere Schreibweise", plus({ "Contents/INFO~Mac.PLIST": "x" }), /^rejected: unexpected code in the bundle\n$/);
+refused("Framework nennt nur für eine Plattform ein anderes Programm", plus({
+  [`${FRAMEWORK}/Versions/A/Resources/Info.plist`]: plist("test.probe.framework", "F").replace("</dict>", "<key>CFBundleExecutable-macos</key><string>skript</string></dict>"), [`${FRAMEWORK}/Versions/A/skript`]: "#!/bin/sh\n",
+}), /^rejected: bundle description does not match\n$/);
+refused("App nennt nur für eine Plattform ein anderes Programm", plus({ "Contents/Info.plist": plist("test.probe", "Probe").replace("</dict>", "<key>CFBundleExecutable-macos</key><string>skript</string></dict>") }), /^rejected: bundle description does not match\n$/);
+refused("App nennt nur für eine Plattform eine andere Kennung", plus({
+  "Contents/Info.plist": plist("test.probe", "Probe").replace("</dict>", "<key>cfbundleidentifier~mac</key><string>test.fremd</string></dict>"),
+}), /^rejected: bundle description does not match\n$/);
 refused("Framework nennt ein anderes Programm", plus({
   [`${FRAMEWORK}/Versions/A/Resources/Info.plist`]: plist("test.probe.framework", "skript"), [`${FRAMEWORK}/Versions/A/skript`]: "#!/bin/sh\n",
 }), /^rejected: bundle description does not match\n$/);

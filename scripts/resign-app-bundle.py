@@ -13,6 +13,8 @@ und mit welchen Rechten (Entitlements), steht allein in einer Liste aus diesem R
 Enthält das Bundle ausführbaren Code oder eingebettete Bundles, die nicht in der Liste stehen, oder fehlt ein
 Teil der Liste, wird nichts signiert. Als eingebettetes Bundle zählt jeder Ordner mit einer Bundle-Endung und
 jede Stelle mit einer Info.plist oder einem Ordner _CodeSignature, die nicht zu einem Teil der Liste gehört.
+Eine Info.plist in der Fassung für eine Plattform (Info-macos.plist) und Schlüssel in einer solchen Fassung
+(CFBundleExecutable-macos) gibt es nirgends: Sie gingen der schlichten Angabe vor.
 Kein Name im Bundle trägt Steuerzeichen. Jedes eingebettete Bundle der Liste nennt in seiner Info.plist genau
 die Datei der Liste als sein Programm; bei einem Framework zeigt Versions/Current auf deren Fassung, und es
 hat keinen Ordner Contents oder Support Files.
@@ -47,6 +49,7 @@ import unicodedata
 
 BUNDLE_SUFFIXES = (".app", ".framework", ".xpc", ".appex", ".bundle", ".plugin")
 BUNDLE_MARKS = ("info.plist", "_codesignature")
+DESCRIPTION_KEYS = ("CFBundleIdentifier", "CFBundleExecutable")
 MACHO_MAGICS = (0xFEEDFACE, 0xFEEDFACF, 0xCEFAEDFE, 0xCFFAEDFE, 0xCAFEBABE, 0xCAFEBABF)
 RUNTIME_FLAG = re.compile(rb".*\bflags=0x[0-9a-f]+\([^)]*\bruntime\b[^)]*\).*")
 DEVELOPER_ID = " and certificate 1[field.1.2.840.113635.100.6.2.6] and certificate leaf[field.1.2.840.113635.100.6.1.13]"
@@ -78,6 +81,12 @@ def is_code(path):
     return len(head) == 4 and struct.unpack(">I", head)[0] in MACHO_MAGICS
 
 
+def is_mark(name):
+    """Info.plist, auch in der Fassung für eine Plattform, und der Ordner der Signatur."""
+    lower = name.lower()
+    return lower in BUNDLE_MARKS or lower.startswith(("info-", "info~")) and lower.endswith(".plist")
+
+
 def found_code(app):
     """Alle Mach-O-Dateien, eingebetteten Bundles und Bundle-Merkmale, relativ zum Bundle. Verweise zählen nie
     als Code; ein Verweis mit dem Namen eines Bundle-Merkmals ist nie erlaubt. Kein Name trägt Steuerzeichen:
@@ -87,7 +96,7 @@ def found_code(app):
         for name in [*dirnames, *filenames]:
             if any(unicodedata.category(char) == "Cc" for char in name):
                 raise Rejected("unexpected name in the bundle")
-            if name.lower() in BUNDLE_MARKS:
+            if is_mark(name):
                 if os.path.islink(os.path.join(folder, name)):
                     raise Rejected("unexpected code in the bundle")
                 marks.add(os.path.relpath(os.path.join(folder, name), app))
@@ -157,13 +166,15 @@ def load_manifest(path, tags):
 
 
 def read_description(app, relative, marks):
-    """Kennung und Programm laut Info.plist. Gelesen wird nur eine Datei, die ohne Verweis erreicht wurde."""
+    """Kennung und Programm laut Info.plist. Gelesen wird nur eine Datei, die ohne Verweis erreicht wurde.
+    Trägt sie einen der beiden Schlüssel auch in der Fassung für eine Plattform, gilt keine Angabe."""
     if relative not in marks:
         raise Rejected("bundle description cannot be read")
     try:
         with open(os.path.join(app, relative), "rb") as handle:
             info = plistlib.load(handle)
-        return info.get("CFBundleIdentifier"), info.get("CFBundleExecutable")
+        variants = [key for key in info if key not in DESCRIPTION_KEYS and key.casefold().startswith(tuple(k.casefold() for k in DESCRIPTION_KEYS))]
+        return (None, None) if variants else tuple(info.get(key) for key in DESCRIPTION_KEYS)
     except Exception as error:  # plistlib meldet je nach Fehler verschiedene Arten
         raise Rejected("bundle description cannot be read") from error
 
