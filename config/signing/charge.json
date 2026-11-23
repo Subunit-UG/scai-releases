@@ -1,0 +1,12 @@
+{
+  "bundle": "Subunit Charge.app",
+  "executable": "SubunitCharge",
+  "identifier": "co.subunit.charge",
+  "entitlements": [],
+  "code": [
+    {
+      "path": "Contents/MacOS/SubunitChargeHelper",
+      "identifier": "co.subunit.charge.helper"
+    }
+  ]
+}
