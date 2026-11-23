@@ -32,13 +32,18 @@ class Rejected(Exception):
     pass
 
 
+def has_control(text):
+    """Steuerzeichen, auch Zeilenumbrüche: Werkzeuge nennen Pfade zeilenweise."""
+    return any(unicodedata.category(char) == "Cc" for char in text)
+
+
 def link_target(raw):
     """Ziel eines Verweises: relativer Pfad aus einfachen Namen."""
     try:
         target = raw.decode("utf-8")
     except UnicodeDecodeError as error:
         raise Rejected("link target") from error
-    if not target or len(raw) > MAX_LINK_BYTES or "\\" in target or "\0" in target or target.startswith("/"):
+    if not target or len(raw) > MAX_LINK_BYTES or "\\" in target or has_control(target) or target.startswith("/"):
         raise Rejected("link target")
     if any(part in ("", ".", "..") for part in target.split("/")):
         raise Rejected("link target")
@@ -54,7 +59,7 @@ def plan_entries(infos, bundle):
     plan = []
     for info in infos:
         name = info.filename
-        if not name or "\\" in name or "\0" in name or name.startswith("/") or len(name.encode("utf-8", "surrogatepass")) > MAX_NAME_BYTES:
+        if not name or "\\" in name or has_control(name) or name.startswith("/") or len(name.encode("utf-8", "surrogatepass")) > MAX_NAME_BYTES:
             raise Rejected("entry name")
         is_dir = name.endswith("/")
         parts = (name[:-1] if is_dir else name).split("/")

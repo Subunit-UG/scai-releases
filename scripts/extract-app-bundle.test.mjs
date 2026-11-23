@@ -99,6 +99,7 @@ rejected("Verweis nach oben", [...good, link("Contents/verweis", "../../draussen
 rejected("Verweis nach oben in der Mitte", [...good, link("Contents/verweis", "MacOS/../../../draussen")], /^rejected: link target\n$/);
 rejected("Verweis mit Punkt", [...good, link("Contents/verweis", "./MacOS/probe")], /^rejected: link target\n$/);
 rejected("Verweis mit leerem Ziel", [...good, link("Contents/verweis", "")], /^rejected: link target\n$/);
+rejected("Verweis mit Zeilenumbruch im Ziel", [...good, link("Contents/verweis", "MacOS/pro\nbe")], /^rejected: link target\n$/);
 rejected("Verweis mit Rückstrich", [...good, link("Contents/verweis", "MacOS\\probe")], /^rejected: link target\n$/);
 rejected("Verweis mit Ziel, das kein Text ist", [...good, { ...link("Contents/verweis", ""), hex: "fffe41" }], /^rejected: link target\n$/);
 rejected("Verweis mit Nullzeichen im Ziel", [...good, { ...link("Contents/verweis", ""), hex: "4d61634f530070726f6265" }], /^rejected: link target\n$/);
@@ -111,6 +112,9 @@ rejected("Verweis und Datei mit demselben Namen", [...good, link("Contents/Info.
 rejected("Verweis als Ordner des Bundles", [{ name: BUNDLE, data: "/tmp", kind: "link", mode: 0o777 }, { name: `${BUNDLE}/x`, data: "x" }], /^rejected: symbolic link\n$/);
 rejected("Verweis mit Ordner-Namen", [...good, { name: `${BUNDLE}/Contents/verweis/`, data: "MacOS", kind: "link", mode: 0o777 }], /^rejected: symbolic link\n$/);
 rejected("FIFO", [...good, { name: `${BUNDLE}/Contents/rohr`, kind: "fifo" }], /^rejected: entry type\n$/);
+rejected("Zeilenumbruch im Namen", [...good, { name: `${BUNDLE}/Contents/a\nb`, data: "x" }], /^rejected: entry name\n$/);
+rejected("Steuerzeichen im Ordnernamen", [...good, { name: `${BUNDLE}/Contents/a\u001b/b`, data: "x" }], /^rejected: entry name\n$/);
+rejected("Steuerzeichen oberhalb von ASCII im Namen", [...good, { name: `${BUNDLE}/Contents/a\u0085b`, data: "x" }], /^rejected: entry name\n$/);
 rejected("Rückstrich im Namen", [...good, { name: `${BUNDLE}/Contents\\x`, data: "x" }], /^rejected: entry name\n$/);
 rejected("leerer Pfadteil", [...good, { name: `${BUNDLE}//x`, data: "x" }], /^rejected: entry path\n$/);
 rejected("Punkt als Pfadteil", [...good, { name: `${BUNDLE}/./x`, data: "x" }], /^rejected: entry path\n$/);
