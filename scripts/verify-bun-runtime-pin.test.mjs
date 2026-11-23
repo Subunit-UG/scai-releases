@@ -59,11 +59,11 @@ test("every workflow that checks out Atlas is found (atlas-pr-check and fleet-so
 });
 for (const { name, text: workflow } of atlasWorkflows) test(`${name}: Atlas checks its API/worker pin confidentially after checkout and before source execution`, () => {
   const checkout = workflow.indexOf('run: bash gate/scripts/checkout-private-source.sh atlas');
-  const setup = workflow.lastIndexOf("bun-version:", checkout);
-  assert.match(workflow.slice(setup, workflow.indexOf("\n", setup)), /bun-version: 1\.4\.4$/);
+  // Seit 23.11.2026: Bun kommt nach dem Checkout aus dem Quell-Pin (install-bun-from-pin.sh), nicht mehr per setup-bun davor.
+  const setup = workflow.indexOf('gate/scripts/install-bun-from-pin.sh" bun-runtime.pin', checkout);
   const pin = workflow.indexOf('atlas-bun-pin bash "$GITHUB_WORKSPACE/gate/scripts/verify-bun-runtime-pin.sh" bun-runtime.pin', checkout);
   const install = workflow.indexOf("atlas-web-install npm ci", checkout);
-  assert.ok(setup > 0 && setup < checkout && checkout < pin && pin < install);
+  assert.ok(checkout > 0 && checkout < setup && setup < pin && pin < install);
   const step = workflow.slice(workflow.lastIndexOf("      - name:", pin), workflow.indexOf("      - name:", pin));
   assert.match(step, /working-directory: private\/atlas\/atlas-api/);
   assert.match(step, /run: bash "\$GITHUB_WORKSPACE\/gate\/scripts\/run-confidential\.sh" atlas-bun-pin/);

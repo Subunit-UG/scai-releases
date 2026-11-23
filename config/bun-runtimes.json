@@ -1,0 +1,13 @@
+{
+  "_hinweis": "Zugelassene Bun-Laufzeiten für Jobs, die Bun aus dem Pin der privaten Quelle einrichten (scripts/install-bun-from-pin.sh). Werte aus signaturgeprüften Releases (Robobun F3DCC08A8572C0749B3E18888EAB4D40A7B22B59). Neue Version = neuer Eintrag hier; jedes Repo stellt danach mit eigenem Pin-PR um. Alte Einträge entfernen, sobald keine Quelle sie mehr pinnt.",
+  "linux-x64": {
+    "1.4.4": {
+      "zip_sha256": "bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c",
+      "bun_sha256": "10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235"
+    },
+    "1.4.5": {
+      "zip_sha256": "94559b3b528995a49452f9f2404cec74f2efd7d06e0a000a8cd214b02c3666eb",
+      "bun_sha256": "f05d28a3862f4b84395c7fa32480b835dd47482e80b7e7a49a115227f0c06083"
+    }
+  }
+}
