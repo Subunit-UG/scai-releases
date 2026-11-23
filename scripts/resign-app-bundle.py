@@ -14,7 +14,8 @@ Enthält das Bundle ausführbaren Code oder eingebettete Bundles, die nicht in d
 Teil der Liste, wird nichts signiert. Als eingebettetes Bundle zählt jeder Ordner mit einer Bundle-Endung und
 jede Stelle mit einer Info.plist oder einem Ordner _CodeSignature, die nicht zu einem Teil der Liste gehört.
 Eine Info.plist in der Fassung für eine Plattform (Info-macos.plist) und Schlüssel in einer solchen Fassung
-(CFBundleExecutable-macos) gibt es nirgends: Sie gingen der schlichten Angabe vor.
+(CFBundleExecutable-macos) gibt es nirgends: Sie gingen der schlichten Angabe vor. Kein Schlüssel einer
+gelesenen Info.plist steht zweimal da.
 Kein Name im Bundle trägt Steuerzeichen. Jedes eingebettete Bundle der Liste nennt in seiner Info.plist genau
 die Datei der Liste als sein Programm; bei einem Framework zeigt Versions/Current auf deren Fassung, und es
 hat keinen Ordner Contents oder Support Files.
@@ -68,6 +69,15 @@ class Rejected(Exception):
 
 class Usage(Exception):
     pass
+
+
+class OnceDict(dict):
+    """Jeder Schlüssel höchstens einmal: Bei doppelten nimmt nicht jedes Werkzeug denselben Wert."""
+
+    def __setitem__(self, key, value):
+        if key in self:
+            raise ValueError("duplicate key")
+        super().__setitem__(key, value)
 
 
 def is_code(path):
@@ -172,7 +182,7 @@ def read_description(app, relative, marks):
         raise Rejected("bundle description cannot be read")
     try:
         with open(os.path.join(app, relative), "rb") as handle:
-            info = plistlib.load(handle)
+            info = plistlib.load(handle, dict_type=OnceDict)
         variants = [key for key in info if key not in DESCRIPTION_KEYS and key.casefold().startswith(tuple(k.casefold() for k in DESCRIPTION_KEYS))]
         return (None, None) if variants else tuple(info.get(key) for key in DESCRIPTION_KEYS)
     except Exception as error:  # plistlib meldet je nach Fehler verschiedene Arten
@@ -181,7 +191,8 @@ def read_description(app, relative, marks):
 
 def check_layout(app, manifest):
     """Das Bundle enthält genau den Code der Liste, nicht mehr und nicht weniger, und jedes Bundle nennt als
-    sein Programm die Datei der Liste: Genau diese Datei signiert codesign, wenn es das Bundle signiert."""
+    sein Programm die Datei der Liste. Das weist die bekannten Wege ab, auf denen codesign ein anderes Programm
+    wählen würde; maßgeblich bleibt die Prüfung nach dem Signieren."""
     if os.path.basename(app) != manifest["bundle"] or os.path.islink(app) or not os.path.isdir(app):
         raise Rejected("not the expected bundle")
     files, bundles, marks = found_code(app)

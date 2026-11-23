@@ -117,6 +117,24 @@ const LINKS = {
   [`${FRAMEWORK}/F`]: "Versions/Current/F",
   [`${FRAMEWORK}/Resources`]: "Versions/Current/Resources",
 };
+// Binäre plist mit den Paaren in genau dieser Folge, auch mit doppeltem Schlüssel.
+function bplist(pairs) {
+  const strings = [...new Set(pairs.flat())];
+  const text = (value) => { const bytes = Buffer.from(value, "ascii"); return Buffer.concat([Buffer.from(bytes.length < 15 ? [0x50 | bytes.length] : [0x5f, 0x10, bytes.length]), bytes]); };
+  const objects = [Buffer.from([0xd0 | pairs.length, ...pairs.map(([key]) => 1 + strings.indexOf(key)), ...pairs.map(([, value]) => 1 + strings.indexOf(value))]), ...strings.map(text)];
+  const offsets = [];
+  let at = 8;
+  for (const object of objects) { offsets.push(at); at += object.length; }
+  const table = Buffer.alloc(2 * offsets.length);
+  offsets.forEach((offset, index) => table.writeUInt16BE(offset, 2 * index));
+  const trailer = Buffer.alloc(32);
+  trailer[6] = 2;
+  trailer[7] = 1;
+  trailer.writeBigUInt64BE(BigInt(objects.length), 8);
+  trailer.writeBigUInt64BE(BigInt(at), 24);
+  return Buffer.concat([Buffer.from("bplist00"), ...objects, table, trailer]);
+}
+const TWICE = bplist([["CFBundleExecutable", "skript"], ["CFBundleExecutable", "F"], ["CFBundleIdentifier", "test.probe.framework"], ["CFBundlePackageType", "FMWK"]]);
 const SIGNED = (identifier, entitlements = {}) => ({ identifier, runtime: true, stamp: true, entitlements, developer: true });
 const RIGHTS = { [CAMERA]: true, [AUDIO]: true };
 const PRESIGNED = { [FRAMEWORK]: SIGNED("test.probe.framework"), [HELPER]: SIGNED("test.probe.helfer"), ".": SIGNED("test.probe", RIGHTS) };
@@ -247,6 +265,13 @@ refused("App nennt nur für eine Plattform ein anderes Programm", plus({ "Conten
 refused("App nennt nur für eine Plattform eine andere Kennung", plus({
   "Contents/Info.plist": plist("test.probe", "Probe").replace("</dict>", "<key>cfbundleidentifier~mac</key><string>test.fremd</string></dict>"),
 }), /^rejected: bundle description does not match\n$/);
+refused("Programm steht zweimal in der Beschreibung des Frameworks, das gelistete zuletzt", plus({
+  [`${FRAMEWORK}/Versions/A/Resources/Info.plist`]: plist("test.probe.framework", "F").replace("<dict>", "<dict><key>CFBundleExecutable</key><string>skript</string>"),
+}), /^rejected: bundle description cannot be read\n$/);
+refused("Programm steht zweimal in der Beschreibung des Frameworks, binäre Form", plus({ [`${FRAMEWORK}/Versions/A/Resources/Info.plist`]: TWICE }), /^rejected: bundle description cannot be read\n$/);
+refused("Kennung steht zweimal in der Beschreibung der App", plus({
+  "Contents/Info.plist": plist("test.probe", "Probe").replace("<dict>", "<dict><key>CFBundleIdentifier</key><string>test.fremd</string>"),
+}), /^rejected: bundle description cannot be read\n$/);
 refused("Framework nennt ein anderes Programm", plus({
   [`${FRAMEWORK}/Versions/A/Resources/Info.plist`]: plist("test.probe.framework", "skript"), [`${FRAMEWORK}/Versions/A/skript`]: "#!/bin/sh\n",
 }), /^rejected: bundle description does not match\n$/);

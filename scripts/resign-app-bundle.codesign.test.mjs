@@ -3,7 +3,7 @@
 // Läuft nur auf macOS mit Compiler. Mit REQUIRE_CODESIGN=1 ist ein Lauf ohne beides ein Fehler.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test, { after } from "node:test";
@@ -73,6 +73,24 @@ const plist = (program, identifier, kind, rights) => `<?xml version="1.0" encodi
   rights ? rights.map((key) => `<key>${key}</key><true/>`).join("") : `<key>CFBundleExecutable</key><string>${program}</string><key>CFBundleIdentifier</key><string>${identifier}</string><key>CFBundlePackageType</key><string>${kind}</string>`
 }</dict></plist>\n`;
 const SCRIPT = "#!/bin/sh\nexit 0\n";
+// Binäre plist mit den Paaren in genau dieser Folge, auch mit doppeltem Schlüssel.
+function bplist(pairs) {
+  const strings = [...new Set(pairs.flat())];
+  const text = (value) => { const bytes = Buffer.from(value, "ascii"); return Buffer.concat([Buffer.from(bytes.length < 15 ? [0x50 | bytes.length] : [0x5f, 0x10, bytes.length]), bytes]); };
+  const objects = [Buffer.from([0xd0 | pairs.length, ...pairs.map(([key]) => 1 + strings.indexOf(key)), ...pairs.map(([, value]) => 1 + strings.indexOf(value))]), ...strings.map(text)];
+  const offsets = [];
+  let at = 8;
+  for (const object of objects) { offsets.push(at); at += object.length; }
+  const table = Buffer.alloc(2 * offsets.length);
+  offsets.forEach((offset, index) => table.writeUInt16BE(offset, 2 * index));
+  const trailer = Buffer.alloc(32);
+  trailer[6] = 2;
+  trailer[7] = 1;
+  trailer.writeBigUInt64BE(BigInt(objects.length), 8);
+  trailer.writeBigUInt64BE(BigInt(at), 24);
+  return Buffer.concat([Buffer.from("bplist00"), ...objects, table, trailer]);
+}
+const TWICE = bplist([["CFBundleExecutable", "skript"], ["CFBundleExecutable", "F"], ["CFBundleIdentifier", "test.probe.framework"], ["CFBundlePackageType", "FMWK"]]);
 
 const roots = [];
 after(() => { for (const root of roots) rmSync(root, { recursive: true, force: true }); });
@@ -121,8 +139,8 @@ function build({ frameworkProgram = "F", extra } = {}) {
   writeFileSync(join(root, "liste.json"), JSON.stringify(MANIFEST));
   return { root, app, at, cs: join(root, "cs") };
 }
-function tool({ root, app, cs }, { team = TEAM, timestamp = "none", extra = [] } = {}) {
-  const result = spawnSync("python3", ["-I", join(HERE, "resign-app-bundle.py"), app, "--manifest", join(root, "liste.json"),
+function tool({ root, app, cs }, { team = TEAM, timestamp = "none", extra = [], script = join(HERE, "resign-app-bundle.py") } = {}) {
+  const result = spawnSync("python3", ["-I", script, app, "--manifest", join(root, "liste.json"),
     "--expect-team", team, "--timestamp", timestamp, "--with", "innen", "--codesign", cs, ...extra], {
     encoding: "utf8", env: { PATH: process.env.PATH, APPLE_SIGNING_IDENTITY: IDENTITY },
   });
@@ -190,6 +208,11 @@ test("Beschreibung in der Fassung für eine Plattform nennt ein Skript: codesign
     assert.equal(chosen(made), "skript", "der Bau hat damit das Skript signiert, nicht die Datei der Liste");
     rejected(tool(made), "unexpected code in the bundle");
   });
+  await t.test("als doppelter Schlüssel in binärer Form", () => {
+    const made = build({ extra: (at) => { script(at); writeFileSync(at(`${FRAMEWORK}/Versions/A/Resources/Info.plist`), TWICE); } });
+    assert.equal(chosen(made), "skript", "der Bau hat damit das Skript signiert, nicht die Datei der Liste");
+    rejected(tool(made), "bundle description cannot be read");
+  });
   await t.test("als Schlüssel in der Info.plist", () => {
     const made = build({
       extra: (at) => {
@@ -201,6 +224,49 @@ test("Beschreibung in der Fassung für eine Plattform nennt ein Skript: codesign
     assert.equal(chosen(made), "skript", "der Bau hat damit das Skript signiert, nicht die Datei der Liste");
     rejected(tool(made), "bundle description does not match");
   });
+});
+
+test("ohne die Prüfungen vor dem Signieren: die Anforderung an die Datei des Programms hält allein", options, async (t) => {
+  // Eine Kopie des Werkzeugs, in der die Prüfungen von Namen, Bundle-Merkmalen, Beschreibung und signiertem
+  // Programm fehlen. Fehlt eine der Stellen im Werkzeug, ist dieser Test anzupassen.
+  let source = readFileSync(join(HERE, "resign-app-bundle.py"), "utf8");
+  for (const [found, instead] of [
+    ['if any(unicodedata.category(char) == "Cc" for char in name):', "if False:"],
+    [" or marks - allowed_marks:", ":"],
+    ['if read_description(app, unit["plist"], marks)[1] != os.path.basename(unit["binary"]):', "if False:"],
+    ["if signed is None or os.path.realpath(os.fsdecode(signed)) != os.path.realpath(program):", "if False:"],
+  ]) {
+    assert.equal(source.split(found).length, 2, `Stelle im Werkzeug: ${found}`);
+    source = source.replace(found, instead);
+  }
+  const weakened = join(scratch(), "ohne-pruefungen.py");
+  writeFileSync(weakened, source);
+  // Der Bau macht ein Skript zum Programm des Frameworks und signiert die Datei der Liste selbst mit der
+  // erwarteten Kennung (erst danach: Solange sie das Programm ist, signiert codesign mit ihr das ganze Framework).
+  const hostile = (at, name) => {
+    writeFileSync(at(`${FRAMEWORK}/Versions/A/${name}`), SCRIPT);
+    chmodSync(at(`${FRAMEWORK}/Versions/A/${name}`), 0o755);
+    real("--force", "--options", "runtime,kill", "--identifier", "test.probe.framework", "--sign", "-", at(`${FRAMEWORK}/Versions/A/F`));
+  };
+  const cases = {
+    "Programmname mit Zeilenumbruch": { frameworkProgram: "F\nx", extra: (at) => hostile(at, "F\nx") },
+    "Beschreibung in der Fassung für eine Plattform": {
+      extra: (at) => { writeFileSync(at(`${FRAMEWORK}/Versions/A/Resources/Info-macos.plist`), plist("skript", "test.probe.framework", "FMWK")); hostile(at, "skript"); },
+    },
+    "Schlüssel in der Fassung für eine Plattform": {
+      extra: (at) => {
+        writeFileSync(at(`${FRAMEWORK}/Versions/A/Resources/Info.plist`),
+          plist("F", "test.probe.framework", "FMWK").replace("</dict>", "<key>CFBundleExecutable-macos</key><string>skript</string></dict>"));
+        hostile(at, "skript");
+      },
+    },
+  };
+  for (const [name, change] of Object.entries(cases)) {
+    await t.test(name, () => {
+      const made = build(change);
+      rejected(tool(made, { script: weakened }), "unexpected team");
+    });
+  }
 });
 
 test("eingebettetes Bundle mit unbekannter Endung, vom Bau signiert: abgewiesen", options, () => {
@@ -262,5 +328,6 @@ test("nach dem Signieren verändert: jede Abweichung ist rot", options, async (t
     rejected(only(made), "unexpected code in the bundle");
   });
   await t.test("anderes Team erwartet", () => rejected(only(signed(), { team: "ZZZZZ99999" }), "unexpected team"));
+  // Nur die Abweisung: Dass eine echte Developer-ID-Signatur besteht, lässt sich ohne Zertifikat nicht zeigen.
   await t.test("Auslieferung verlangt, Signatur stammt von keinem Developer-ID-Zertifikat", () => rejected(only(signed(), { timestamp: "secure" }), "unexpected certificate"));
 });
