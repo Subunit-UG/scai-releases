@@ -26,6 +26,9 @@ if args[0] == "import":
     json.dump({"mode": stat.S_IMODE(info.st_mode), "content": list(open(args[1], "rb").read()), "env": open(os.environ["GITHUB_ENV"]).read()}, open(os.path.join(here, "import.json"), "w"))
 if args[:3] == ["list-keychains", "-d", "user"] and len(args) == 3:
     sys.stdout.write(config.get("existing", ""))
+if args[0] in ("list-keychains", "find-identity"):
+    with open(os.path.join(here, "left.jsonl"), "a") as handle:
+        handle.write(json.dumps(sorted(os.listdir(os.environ["RUNNER_TEMP"]))) + "\\n")
 if args[0] == "find-identity":
     count = config.get("identities", 1)
     sys.stdout.write(''.join('  %d) 0123456789ABCDEF "${NAME}"\\n' % (i + 1) for i in range(count)) + '     %d valid identities found\\n' % count)
@@ -54,6 +57,7 @@ function load({ env = {}, args = [], config = {} } = {}) {
       calls: read("bin/calls.jsonl").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)),
       imported: existsSync(join(root, "bin/import.json")) ? JSON.parse(read("bin/import.json")) : null,
       githubEnv: read("github-env"),
+      leftDuring: read("bin/left.jsonl").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)),
       left: readdirSync(join(root, "temp")),
       temp: join(root, "temp"),
     };
@@ -79,6 +83,9 @@ test("lädt die Identität in einen eigenen Schlüsselbund und nennt nur dessen 
   assert.deepEqual(r.imported.content, [...CERTIFICATE]);
   assert.equal(r.imported.mode, 0o600);
   assert.deepEqual(r.left, []);
+  // Sie ist schon weg, bevor die Suchliste geändert und die Identität gezählt wird, nicht erst am Ende.
+  assert.equal(r.leftDuring.length, 3);
+  for (const names of r.leftDuring) assert.ok(!names.includes("signing-identity.p12"), JSON.stringify(names));
   // Der Pfad stand schon fest, bevor das Zertifikat geschrieben wurde: das Aufräumen findet den Schlüsselbund immer.
   assert.equal(r.imported.env, `PROBE_KEYCHAIN=${keychain}\n`);
   // Weder Name noch Kennwörter im Protokoll.

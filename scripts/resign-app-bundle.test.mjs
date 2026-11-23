@@ -19,7 +19,7 @@ const plist = (identifier, executable) => `<?xml version="1.0" encoding="UTF-8"?
 
 // Steht an der Stelle von codesign: merkt sich, was signiert wurde, und beschreibt es danach so.
 const FAKE = `#!/usr/bin/env python3
-import json, os, plistlib, sys
+import json, os, plistlib, re, sys
 here = os.path.dirname(os.path.abspath(__file__))
 config = json.load(open(os.path.join(here, "config.json")))
 state_path = os.path.join(here, "state.json")
@@ -39,24 +39,42 @@ if args[0] == "--force":
     state[rel] = entry
     json.dump(state, open(state_path, "w"))
     sys.exit(0)
-if args[0] == "--verify":
+entry = {**state.get(rel, {}), **config.get("tamper", {}).get(rel, {})}
+if args[0] == "--verify" and args[1:3] == ["--strict", "--deep"]:
     log("verify " + rel + " | " + " ".join(args[:-1]))
     sys.exit(config.get("verifyExit", 0))
-entry = {**state.get(config.get("binaries", {}).get(rel, rel), {}), **config.get("tamper", {}).get(rel, {})}
+if args[0] == "--verify":
+    # Anforderung an die Signatur: nur die beiden Formen, die das Werkzeug stellt.
+    assert args[1] == "--strict" and len(args) == 4 and args[2].startswith("-R="), args
+    text = args[2][3:]
+    log("require " + rel + " | " + text)
+    full = re.fullmatch(r'anchor apple generic and identifier "([^"]+)" and certificate leaf\\[subject\\.OU\\] = "([A-Z0-9]{10})"', text)
+    short = re.fullmatch(r'identifier "([^"]+)"', text)
+    if not (full or short):
+        sys.exit(9)
+    if not entry:
+        sys.exit(1)
+    if full:
+        sys.exit(0 if (entry["identifier"], entry.get("team", config["team"]), entry.get("adhoc", False)) == (full.group(1), full.group(2), False) else 1)
+    sys.exit(0 if entry["identifier"] == short.group(1) else 1)
 if args[0] == "-dvvv":
     log("describe " + rel)
     if not entry or rel in config.get("undescribable", []):
         sys.exit(1)
-    sys.stderr.write("Executable=/x\\nIdentifier=%s\\nCodeDirectory v=20500 size=1 flags=0x%s hashes=1+1 location=embedded\\nTeamIdentifier=%s\\n%s" % (
-        entry["identifier"], "10000(runtime)" if entry["runtime"] else "2(adhoc)", entry.get("team", config["team"]),
-        "Timestamp=1 Jan 2026 at 00:00:00\\n" if entry["stamp"] else "Signed Time=1 Jan 2026\\n"))
+    entry = {**entry, **config.get("describeTamper", {}).get(rel, {})}
+    executable = os.path.normpath(os.path.join(config["root"], config.get("executables", {}).get(rel, rel)))
+    sys.stderr.write("Executable=%s\\nIdentifier=%s\\nFormat=x\\nCodeDirectory v=20500 size=1 flags=0x%s hashes=1+1 location=embedded\\nTeamIdentifier=%s\\n%s%s" % (
+        executable, entry["identifier"], "10000(runtime)" if entry["runtime"] else "2(adhoc)", entry.get("team", config["team"]),
+        "Timestamp=1 Jan 2026 at 00:00:00\\n" if entry["stamp"] else "Signed Time=1 Jan 2026\\n", config.get("describeExtra", {}).get(rel, "")))
     sys.exit(0)
 if args[:4] == ["-d", "--entitlements", "-", "--xml"]:
     log("rights " + rel)
-    if not entry:
+    if not entry or rel in config.get("rightsUnreadable", []):
         sys.exit(1)
     if rel in config.get("garbage", []):
         sys.stdout.write("kein plist"); sys.exit(0)
+    if rel in config.get("rightsList", []):
+        sys.stdout.buffer.write(plistlib.dumps(["com.apple.security.device.camera"])); sys.exit(0)
     if entry["entitlements"]:
         sys.stdout.buffer.write(plistlib.dumps(entry["entitlements"]))
     sys.exit(0)
@@ -77,7 +95,8 @@ const MANIFEST = {
     { path: INNER, identifier: "test.probe.innen", binary: "Contents/MacOS/Innen", when: "innen" },
   ],
 };
-const BINARIES = { "Contents/MacOS/Probe": ".", [`${FRAMEWORK}/Versions/A/F`]: FRAMEWORK, [`${INNER}/Contents/MacOS/Innen`]: INNER };
+// Welches Programm die Signatur eines Bundles trägt; beim Framework über den Verweis auf die aktuelle Fassung.
+const EXECUTABLES = { ".": "Contents/MacOS/Probe", [FRAMEWORK]: `${FRAMEWORK}/Versions/Current/F`, [INNER]: `${INNER}/Contents/MacOS/Innen` };
 const LAYOUT = {
   "Contents/MacOS/Probe": THIN,
   [HELPER]: THIN,
@@ -111,7 +130,7 @@ function run(config = {}, { args, identity = IDENTITY, layout = LAYOUT, links = 
     const log = join(root, "aufrufe.log");
     const list = join(root, "liste.json");
     writeFileSync(list, typeof manifest === "string" ? manifest : JSON.stringify(manifest));
-    writeFileSync(join(root, "config.json"), JSON.stringify({ root: app, log, team: TEAM, binaries: BINARIES, ...config }));
+    writeFileSync(join(root, "config.json"), JSON.stringify({ root: app, log, team: TEAM, executables: EXECUTABLES, ...config }));
     prepare?.({ root, app });
     const standard = [app, "--manifest", list, "--expect-team", TEAM, "--timestamp", timestamp, "--codesign", fake, ...extra];
     const result = spawnSync("python3", ["-I", SCRIPT, ...(args ? args({ app, list, fake }) : standard)], {
@@ -142,12 +161,16 @@ test("signiert genau die Teile der Liste in ihrer Reihenfolge, die App zuletzt; 
   assert.doesNotMatch(r.lines.filter((l) => l.startsWith("sign ")).join("\n"), /preserve-metadata|--deep/);
   assert.deepEqual(r.state["."].entitlements, RIGHTS);
   for (const part of [FRAMEWORK, HELPER, INNER]) assert.deepEqual(r.state[part].entitlements, {});
-  // Danach die Prüfung: ganze Signatur, dann jedes Teil mit Beschreibung und Rechten.
+  // Danach die Prüfung: ganze Signatur, dann je Teil erst die Anforderung, dann Beschreibung und Rechte.
   assert.equal(r.lines.find((l) => l.startsWith("verify ")).split(" | ")[1], "--verify --strict --deep");
-  const checked = [`${FRAMEWORK}/Versions/A/F`, HELPER, `${INNER}/Contents/MacOS/Innen`, "Contents/MacOS/Probe", "."];
+  const checked = [FRAMEWORK, HELPER, INNER, "."];
+  assert.deepEqual(of(r.lines, "require"), checked);
   assert.deepEqual(of(r.lines, "describe"), checked);
   assert.deepEqual(of(r.lines, "rights"), checked);
-  assert.match(r.lines.map((l) => l.split(" ")[0]).join(" "), /^(sign )+verify( describe rights)+$/);
+  assert.deepEqual(r.lines.filter((l) => l.startsWith("require ")).map((l) => l.split(" | ")[1]), [
+    "test.probe.framework", "test.probe.helfer", "test.probe.innen", "test.probe",
+  ].map((id) => `anchor apple generic and identifier "${id}" and certificate leaf[subject.OU] = "${TEAM}"`));
+  assert.match(r.lines.map((l) => l.split(" ")[0]).join(" "), /^(sign )+verify( require describe rights)+$/);
 });
 
 test("ohne sicheren Zeitstempel, wenn so verlangt", () => {
@@ -185,6 +208,15 @@ refused("Programm für mehrere Architekturen tief in den Ressourcen", plus({ "Co
 refused("Datei mit der Kennzahl einer Java-Klasse", plus({ "Contents/Resources/Klasse.class": JAVA }), /unexpected code in the bundle/);
 refused("Programm in einem Bundle der Liste, das dort nicht steht", plus({ [`${FRAMEWORK}/Versions/A/Helfer`]: THIN }), /unexpected code in the bundle/);
 refused("eingebettetes Bundle, das nicht in der Liste steht", plus({ "Contents/PlugIns/Fremd.plugin/Contents/Info.plist": "x" }), /unexpected code in the bundle/);
+refused("eingebettetes Bundle mit unbekannter Endung", plus({ "Contents/PlugIns/Fremd.saver/Contents/Info.plist": "x", "Contents/PlugIns/Fremd.saver/Contents/MacOS/skript": "#!/bin/sh\n" }), /unexpected code in the bundle/);
+refused("Signatur-Ordner an fremder Stelle", plus({ "Contents/Resources/y/_CodeSignature/CodeResources": "x" }), /unexpected code in the bundle/);
+refused("Bundle-Beschreibung an fremder Stelle", plus({ "Contents/Resources/y/Info.plist": "x" }), /unexpected code in the bundle/);
+refused("Bundle-Beschreibung in anderer Schreibweise", plus({ "Contents/Resources/y/info.PLIST": "x" }), /unexpected code in the bundle/);
+refused("zweite Fassung im Framework der Liste", plus({ [`${FRAMEWORK}/Versions/B/Resources/Info.plist`]: "x" }), /unexpected code in the bundle/);
+refused("Bundle-Beschreibung eines Teils ist ein Verweis", {
+  layout: Object.fromEntries(Object.entries(LAYOUT).filter(([name]) => name !== `${FRAMEWORK}/Versions/A/Resources/Info.plist`)),
+  prepare: ({ app }) => { mkdirSync(join(app, FRAMEWORK, "Versions/A/Resources"), { recursive: true }); symlinkSync("../../../../hinweis.txt", join(app, FRAMEWORK, "Versions/A/Resources/Info.plist")); },
+}, /unexpected code in the bundle/);
 refused("eingebettete App ohne ihr Kennwort im Aufruf", { layout: WITH_INNER }, /unexpected code in the bundle/);
 refused("eingebettete App verlangt, aber nicht im Bundle", { extra: ["--with", "innen"] }, /expected code missing/);
 refused("ein Teil der Liste fehlt", { layout: Object.fromEntries(Object.entries(LAYOUT).filter(([name]) => name !== HELPER)) }, /expected code missing/);
@@ -235,15 +267,28 @@ unverified("die Signatur des Bundles gilt nicht", { verifyExit: 1 }, /signature 
 unverified("ein Teil trägt eine andere Kennung", { tamper: { [HELPER]: { identifier: "test.fremd" } } }, /unexpected identifier/);
 unverified("die Kennung steht nur als Teil einer längeren da", { tamper: { [HELPER]: { identifier: "test.probe.helfer.zwei" } } }, /unexpected identifier/);
 unverified("ein Teil trägt ein anderes Team", { tamper: { [HELPER]: { team: "FREMDES123" } } }, /unexpected team/);
-unverified("ein Teil ohne Hardened Runtime", { tamper: { [`${FRAMEWORK}/Versions/A/F`]: { runtime: false } } }, /hardened runtime missing/);
+unverified("ein Teil ohne Hardened Runtime", { tamper: { [FRAMEWORK]: { runtime: false } } }, /hardened runtime missing/);
+unverified("ein Teil ist nur ad hoc signiert", { tamper: { [HELPER]: { adhoc: true } } }, /^rejected: unexpected team\n$/);
+unverified("Kennung mit eingeschleuster Team-Zeile", { tamper: { [HELPER]: { identifier: `test.probe.helfer\nTeamIdentifier=${TEAM}`, team: "not set", adhoc: true } } }, /^rejected: unexpected identifier\n$/);
+unverified("Beschreibung nennt eine andere Kennung als die Anforderung", { describeTamper: { [HELPER]: { identifier: "test.fremd" } } }, /^rejected: unexpected identifier\n$/);
+unverified("Beschreibung nennt ein anderes Team als die Anforderung", { describeTamper: { ".": { team: "FREMDES123" } } }, /^rejected: unexpected team\n$/);
+unverified("ein Feld der Beschreibung steht zweimal da", { describeExtra: { [HELPER]: `TeamIdentifier=${TEAM}\n` } }, /^rejected: signature cannot be read\n$/);
+unverified("zweite Zeile mit Kennung in der Beschreibung", { describeExtra: { ".": "Identifier=test.probe\n" } }, /^rejected: signature cannot be read\n$/);
+unverified("die Signatur eines Bundles der Liste trägt ein anderes Programm", { executables: { ...EXECUTABLES, [FRAMEWORK]: `${FRAMEWORK}/Versions/A/skript` } }, /^rejected: unexpected executable\n$/);
+unverified("die Signatur der App trägt ein anderes Programm", { executables: { ...EXECUTABLES, ".": HELPER } }, /^rejected: unexpected executable\n$/);
+unverified("die Signatur einer Datei der Liste gehört zu einer anderen Datei", { executables: { ...EXECUTABLES, [HELPER]: "Contents/MacOS/Probe" } }, /^rejected: unexpected executable\n$/);
 unverified("ein Teil ohne sicheren Zeitstempel", { tamper: { [HELPER]: { stamp: false } } }, /secure timestamp missing/);
 unverified("die App ohne sicheren Zeitstempel", { tamper: { ".": { stamp: false } } }, /secure timestamp missing/);
 unverified("ein Teil trägt Rechte", { tamper: { [HELPER]: { entitlements: { [CAMERA]: true } } } }, /unexpected entitlements/);
-unverified("das Hauptprogramm trägt ein Recht mehr", { tamper: { "Contents/MacOS/Probe": { entitlements: { ...RIGHTS, "com.apple.security.get-task-allow": true } } } }, /unexpected entitlements/);
+unverified("die App trägt ein Recht mehr", { tamper: { ".": { entitlements: { ...RIGHTS, "com.apple.security.get-task-allow": true } } } }, /unexpected entitlements/);
 unverified("der App fehlt ein Recht", { tamper: { ".": { entitlements: { [CAMERA]: true } } } }, /unexpected entitlements/);
 unverified("ein Recht der App hat einen anderen Wert", { tamper: { ".": { entitlements: { [CAMERA]: true, [AUDIO]: "ja" } } } }, /unexpected entitlements/);
-unverified("Rechte sind nicht lesbar", { garbage: [HELPER] }, /entitlements cannot be read/);
-unverified("codesign beschreibt ein Teil nicht", { undescribable: ["Contents/MacOS/Probe"] }, /signature cannot be read/);
+unverified("Rechte sind nicht lesbar", { garbage: [HELPER] }, /^rejected: entitlements cannot be read\n$/);
+unverified("Rechte sind eine Liste statt einer Zuordnung", { rightsList: [HELPER] }, /^rejected: entitlements cannot be read\n$/);
+unverified("codesign liest die Rechte eines Teils nicht", { rightsUnreadable: [HELPER] }, /^rejected: signature cannot be read\n$/);
+unverified("codesign liest die Rechte der App nicht", { rightsUnreadable: ["."] }, /^rejected: signature cannot be read\n$/);
+unverified("codesign beschreibt ein Teil nicht", { undescribable: [HELPER] }, /^rejected: signature cannot be read\n$/);
+unverified("codesign beschreibt die App nicht", { undescribable: ["."] }, /^rejected: signature cannot be read\n$/);
 
 test("Signieren scheitert: Abbruch an dieser Stelle, das Äußere bleibt unsigniert", () => {
   const r = run({ failSign: [HELPER] });
@@ -270,7 +315,9 @@ test("nur prüfen: ohne Identität, ohne Signieren; dieselben Regeln", () => {
   assert.equal(only({ verifyExit: 1 }).status, 1);
   const unsigned = only({ presigned: { ".": PRESIGNED["."] } });
   assert.equal(unsigned.status, 1);
-  assert.match(unsigned.out, /signature cannot be read/);
+  assert.match(unsigned.out, /^rejected: unexpected identifier\n$/);
+  assert.equal(only({ tamper: { [FRAMEWORK]: { adhoc: true } } }).status, 1);
+  assert.equal(only({ executables: { ...EXECUTABLES, [FRAMEWORK]: HELPER } }).status, 1);
   const extra = run({ presigned: PRESIGNED }, { identity: null, extra: ["--verify-only"], layout: { ...LAYOUT, "Contents/MacOS/Zweites": THIN } });
   assert.equal(extra.status, 1);
   assert.match(extra.out, /unexpected code in the bundle/);
@@ -315,6 +362,9 @@ test("Liste: nur schlichte Pfade im Bundle, eindeutige Teile, Rechte nur von App
   broken((m) => { m.code[0].binary = "../../MacOS/Probe"; });
   broken((m) => { delete m.code[0].binary; });
   broken((m) => { m.code[1].binary = "Helfer"; });
+  broken((m) => { m.code[0].binary = "F"; });
+  broken((m) => { m.code[0].binary = "Versions/A/x/F"; });
+  broken((m) => { m.code[2].binary = "Contents/Helpers/Innen"; });
   broken((m) => { m.code[1].identifier = "--sign"; });
   broken((m) => { m.code[1].identifier = ""; });
   broken((m) => { m.code[1].extra = true; });
@@ -360,12 +410,12 @@ for (const [file, expected] of Object.entries(REAL)) {
       const [bundle, executable, identifier] = expected.main;
       const parts = [...expected.parts, ...chosen.flatMap((t) => expected.tagged[t])];
       const layout = { "Contents/Info.plist": plist(identifier, executable), [`Contents/MacOS/${executable}`]: THIN };
-      const binaries = { [`Contents/MacOS/${executable}`]: "." };
+      const executables = { ".": `Contents/MacOS/${executable}` };
       for (const [path, , binary] of parts) {
         layout[binary ? `${path}/${binary}` : path] = THIN;
-        if (binary) binaries[`${path}/${binary}`] = path;
+        if (binary) executables[path] = `${path}/${binary}`;
       }
-      const r = run({ binaries }, { manifest, layout, links: {}, appName: bundle, extra: chosen.flatMap((t) => ["--with", t]) });
+      const r = run({ executables }, { manifest, layout, links: {}, appName: bundle, extra: chosen.flatMap((t) => ["--with", t]) });
       assert.equal(r.status, 0, r.out);
       assert.deepEqual(of(r.lines, "sign"), [...parts.map(([path]) => path), "."]);
       for (const [path, id] of parts) assert.deepEqual(r.state[path], SIGNED(id));

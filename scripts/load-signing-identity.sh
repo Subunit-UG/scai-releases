@@ -23,6 +23,7 @@ security create-keychain -p "$keychain_password" "$keychain"
 security set-keychain-settings -lut 1800 "$keychain"
 security unlock-keychain -p "$keychain_password" "$keychain"
 security import "$p12" -k "$keychain" -P "${APPLE_CERTIFICATE_PASSWORD:-}" -T /usr/bin/codesign > /dev/null
+rm -f "$p12"
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
 # Bestehende Schluesselbunde bleiben in der Suchliste; Pfade zeilenweise, ohne Wortteilung.
 existing=()
@@ -31,7 +32,6 @@ while IFS= read -r line; do
   [ -n "$line" ] && existing+=("$line")
 done < <(security list-keychains -d user)
 security list-keychains -d user -s "$keychain" ${existing[@]+"${existing[@]}"}
-rm -f "$p12"
 # Nur die Anzahl: der Name der Identitaet steht nie im Protokoll. Ohne gueltige Identitaet ist der Schluesselbund wertlos.
 count=$(security find-identity -v -p codesigning "$keychain" | sed -n 's/^ *\([0-9][0-9]*\) valid identities found$/\1/p')
 [[ "$count" =~ ^[1-9][0-9]*$ ]] || { echo "::error::Im Schluesselbund liegt keine gueltige Signier-Identitaet."; exit 1; }

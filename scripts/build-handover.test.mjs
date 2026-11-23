@@ -116,10 +116,21 @@ test("versiegeln: ohne gültigen öffentlichen Schlüssel oder in einen vorhande
     writeFileSync(join(f.root, "fremd.b64"), `${OTHER.publicBase64}\n`);
     symlinkSync(join(f.root, "fremd.b64"), join(f.root, "gate/config/release-handover-public-key.b64"));
     assert.equal(f.sh("seal-build-handover.sh", [f.app, f.out]).status, 1, "Schlüssel als Verweis");
-    mkdirSync(f.out);
-    assert.notEqual(f.sh("seal-build-handover.sh", [f.app, f.out]).status, 0, "Ausgabe-Ordner muss neu sein");
     assert.equal(f.sh("seal-build-handover.sh", [f.app]).status, 64);
     assert.equal(f.sh("seal-build-handover.sh", [f.app, f.out, "x"]).status, 64);
+  } finally { f.close(); }
+});
+
+test("versiegeln: der Ausgabe-Ordner muss neu sein", () => {
+  const f = fixture();
+  try {
+    mkdirSync(f.out);
+    writeFileSync(join(f.out, "fremd"), "x");
+    const r = f.sh("seal-build-handover.sh", [f.app, f.out]);
+    assert.notEqual(r.status, 0, r.out);
+    assert.deepEqual(readdirSync(f.out), ["fremd"]);
+    assert.equal(readFileSync(f.env.GITHUB_OUTPUT, "utf8"), "");
+    assert.deepEqual(readdirSync(f.env.RUNNER_TEMP), []);
   } finally { f.close(); }
 });
 
@@ -163,6 +174,22 @@ closed("Umschlag an einen fremden Schlüssel, Digest stimmt", (f) => {
   writeFileSync(f.env.GITHUB_OUTPUT, "");
   return open(f, sealed(f));
 });
+closed("Umschlag ist kein gültiges Dokument, Digest stimmt", (f) => {
+  writeFileSync(envelopeOf(f), "::error file=x::eingeschleust\n{ kaputt");
+  const r = open(f, sha256(envelopeOf(f)));
+  assert.equal(r.out, "::error::Umschlag laesst sich nicht oeffnen.\n", "nur die feste Meldung, nichts aus der Datei");
+  return r;
+});
+closed("Umschlag mit verändertem Inhalt, Digest stimmt", (f) => {
+  const envelope = JSON.parse(readFileSync(envelopeOf(f), "utf8"));
+  const field = Object.keys(envelope).find((key) => /cipher/i.test(key));
+  assert.ok(field, "Feld mit dem verschlüsselten Inhalt gefunden");
+  envelope[field] = envelope[field].replace(/^(.)/, (c) => (c === "A" ? "B" : "A"));
+  writeFileSync(envelopeOf(f), JSON.stringify(envelope));
+  const r = open(f, sha256(envelopeOf(f)));
+  assert.equal(r.out, "::error::Umschlag laesst sich nicht oeffnen.\n");
+  return r;
+});
 closed("Arbeitsordner gibt es schon", (f, digest) => { mkdirSync(f.work); return open(f, digest); });
 closed("falsche Zahl von Argumenten", (f, digest) => f.sh("open-build-handover.sh", [f.out], { HANDOVER_SHA256: digest, RELEASE_HANDOVER_PRIVATE_KEY: KEYS.privatePem }), /usage/);
 
@@ -186,7 +213,11 @@ test("packen: Rechte nur als ausführbar oder nicht, Archiv neu und nur für den
     assert.equal(r.status, 0, r.out);
     assert.match(r.out, /^packed: \d+ entries\n$/);
     assert.equal(statSync(archive).mode & 0o777, 0o600);
-    assert.equal(f.py("pack-app-bundle.py", [f.app, archive]).status, 1, "vorhandenes Archiv bleibt unberührt");
+    const before = sha256(archive);
+    const again = f.py("pack-app-bundle.py", [f.app, archive]);
+    assert.equal(again.status, 1);
+    assert.equal(again.out, "rejected: archive must be new\n");
+    assert.equal(sha256(archive), before, "vorhandenes Archiv bleibt unberührt");
     assert.equal(f.py("pack-app-bundle.py", [f.app]).status, 64);
     assert.equal(f.py("pack-app-bundle.py", [join(f.root, "fehlt.app"), join(f.root, "b.zip")]).status, 1);
     symlinkSync(f.app, join(f.root, "Verweis.app"));

@@ -345,13 +345,14 @@ jobs:
           else
             ditto -c -k --keepParent "$NOTCH_APP" "$archive"
           fi
-          node gate/scripts/encrypt-confidential-log.mjs \
-            "$archive" "$out/$(basename "$archive").envelope.json" "$RECIPIENT_PUBLIC_KEY_BASE64"
+          envelope="$out/$(basename "$archive").envelope.json"
+          node gate/scripts/encrypt-confidential-log.mjs "$archive" "$envelope" "$RECIPIENT_PUBLIC_KEY_BASE64" > /dev/null
           rm -rf "$plain"
           printf '{"source_sha":"%s","version":"%s","signing":"%s","zentrale_sha":"%s","zentrale_version":"%s","notary_submission":"%s"}\n' \
             "$SOURCE_SHA" "$EXPECTED_VERSION" "$SIGNING" "$ZENTRALE_SHA" "$ZENTRALE_VERSION" "${NOTARY_SUBMISSION:-}" > "$out/build-receipt.json"
           echo "sealed=1" >> "$GITHUB_OUTPUT"
-          echo "PASS notch-envelope (plaintext nur im Umschlag)"
+          # Der Empfaenger gleicht diesen Digest mit der geladenen Datei ab.
+          echo "PASS notch-envelope (sha256=$(shasum -a 256 "$envelope" | cut -d ' ' -f 1), plaintext nur im Umschlag)"
 
       - name: Artefakt hochladen
         if: always() && steps.seal.outputs.sealed == '1'

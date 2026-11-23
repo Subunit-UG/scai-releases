@@ -12,6 +12,7 @@ const key = (options) => Buffer.from(generateKeyPairSync(...options).publicKey.e
 const STRONG = key(["rsa", { modulusLength: 3072 }]);
 const WEAK = key(["rsa", { modulusLength: 2048 }]);
 const CURVE = key(["ec", { namedCurve: "P-256" }]);
+const PSS = key(["rsa-pss", { modulusLength: 3072 }]);
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 const NOTCH = { SOURCE_SHA: SHA, EXPECTED_VERSION: "1.2.3", SIGNING: "developer-id", ZENTRALE_SHA: SHA.replace(/0/g, "f"), ZENTRALE_VERSION: "0.4.0", RECIPIENT_PUBLIC_KEY_BASE64: STRONG };
 const INTERNAL = { ...NOTCH, SIGNING: "development", ZENTRALE_SHA: "", ZENTRALE_VERSION: "" };
@@ -70,6 +71,8 @@ refused("interner Weg mit Version der Zentrale", "notch", { ...INTERNAL, ZENTRAL
 refused("Empfängerschlüssel fehlt", "charge", { ...CHARGE, RECIPIENT_PUBLIC_KEY_BASE64: "" });
 refused("Empfängerschlüssel zu kurz", "charge", { ...CHARGE, RECIPIENT_PUBLIC_KEY_BASE64: WEAK });
 refused("Empfängerschlüssel ist kein RSA", "notch", { ...NOTCH, RECIPIENT_PUBLIC_KEY_BASE64: CURVE });
+refused("Empfängerschlüssel ist ein RSA-PSS-Schlüssel", "notch", { ...NOTCH, RECIPIENT_PUBLIC_KEY_BASE64: PSS });
+refused("Übergabe-Schlüssel ist ein RSA-PSS-Schlüssel", "charge", CHARGE, { handover: `${PSS}\n` });
 refused("Empfängerschlüssel ist kein Schlüssel", "notch", { ...NOTCH, RECIPIENT_PUBLIC_KEY_BASE64: "bm9wZQ==" });
 refused("Übergabe-Schlüssel fehlt", "charge", CHARGE, { handover: null });
 refused("Übergabe-Schlüssel ist leer", "charge", CHARGE, { handover: "" });

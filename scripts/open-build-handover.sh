@@ -26,6 +26,8 @@ mkdir "$work"
 key=$(mktemp "${RUNNER_TEMP:?RUNNER_TEMP is required}/handover-key.XXXXXX")
 trap 'rm -f "$key"' EXIT
 printf '%s\n' "$RELEASE_HANDOVER_PRIVATE_KEY" > "$key"
-node "$here/decrypt-confidential-envelope.mjs" "$envelope" "$work/unsigned.zip" "$key" > /dev/null
+# Fehlertext von Node kann Inhalt des Umschlags zitieren: nur die feste Meldung erreicht das Protokoll.
+node "$here/decrypt-confidential-envelope.mjs" "$envelope" "$work/unsigned.zip" "$key" > /dev/null 2>&1 \
+  || { rm -f "$work/unsigned.zip"; fail "Umschlag laesst sich nicht oeffnen."; }
 rm -f "$key"
 echo "PASS handover-opened"

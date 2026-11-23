@@ -8,15 +8,18 @@ und mit welchen Rechten (Entitlements), steht allein in einer Liste aus diesem R
   entitlements                     Rechte der App; jedes andere Teil bekommt keine
   code                             weitere Teile in Signier-Reihenfolge: eine Datei (path, identifier) oder ein
                                    eingebettetes Bundle (path, identifier, binary); mit "when" nur, wenn --with
-                                   den Namen nennt
+                                   den Namen nennt. binary ist Contents/MacOS/<Name> oder Versions/<V>/<Name>.
 
 Enthält das Bundle ausführbaren Code oder eingebettete Bundles, die nicht in der Liste stehen, oder fehlt ein
-Teil der Liste, wird nichts signiert. Aus vorhandenen Signaturen wird nichts übernommen. Symbolischen Verweisen
-wird nie gefolgt. Hardened Runtime ist immer an.
+Teil der Liste, wird nichts signiert. Als eingebettetes Bundle zählt jeder Ordner mit einer Bundle-Endung und
+jede Stelle mit einer Info.plist oder einem Ordner _CodeSignature, die nicht zu einem Teil der Liste gehört.
+Aus vorhandenen Signaturen wird nichts übernommen. Symbolischen Verweisen wird nie gefolgt. Hardened Runtime
+ist immer an.
 
-Danach, und allein mit --verify-only, wird das Ergebnis geprüft: Die Signatur des ganzen Bundles muss gelten;
-jedes Teil trägt seine Kennung, das erwartete Team, Hardened Runtime und (bei secure) einen sicheren Zeitstempel;
-die App trägt genau ihre Rechte, jedes andere Teil keine.
+Danach, und allein mit --verify-only, wird das Ergebnis geprüft. Die Signatur des ganzen Bundles muss gelten.
+Für jedes Teil prüft codesign selbst Kennung und Team an der Zertifikatskette; erst danach wird seine
+Beschreibung gelesen: Das signierte Programm ist genau die Datei der Liste, Hardened Runtime ist an, bei secure
+trägt die Signatur einen sicheren Zeitstempel. Die App trägt genau ihre Rechte, jedes andere Teil keine.
 
 Die Ausgabe nennt nur Anzahlen, nie Namen oder Inhalte aus dem Bundle.
 
@@ -36,11 +39,15 @@ import sys
 import tempfile
 
 BUNDLE_SUFFIXES = (".app", ".framework", ".xpc", ".appex", ".bundle", ".plugin")
+BUNDLE_MARKS = ("info.plist", "_codesignature")
 MACHO_MAGICS = (0xFEEDFACE, 0xFEEDFACF, 0xCEFAEDFE, 0xCFFAEDFE, 0xCAFEBABE, 0xCAFEBABF)
-RUNTIME_FLAG = re.compile(rb"^CodeDirectory [^\n]*flags=0x[0-9a-f]+\([^)\n]*runtime[^)\n]*\)", re.M)
+RUNTIME_FLAG = re.compile(rb".*\bflags=0x[0-9a-f]+\([^)]*\bruntime\b[^)]*\).*")
+FIELDS = (b"Executable=", b"Identifier=", b"TeamIdentifier=", b"CodeDirectory ", b"Timestamp=")
 IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]{0,126}")
 ENTITLEMENT = re.compile(r"com\.apple\.[A-Za-z0-9.-]{1,120}")
 PLAIN_PATH = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]*(/[A-Za-z0-9][A-Za-z0-9 ._-]*)*")
+APP_BINARY = re.compile(r"(Contents)/MacOS/[^/]+")
+FRAMEWORK_BINARY = re.compile(r"(Versions/[^/]+)/[^/]+")
 MAX_FILES = 20000
 
 
@@ -64,9 +71,15 @@ def is_code(path):
 
 
 def found_code(app):
-    """Alle Mach-O-Dateien und eingebetteten Bundles, relativ zum Bundle. Verweise zählen nie."""
-    files, bundles, seen = set(), set(), 0
+    """Alle Mach-O-Dateien, eingebetteten Bundles und Bundle-Merkmale, relativ zum Bundle. Verweise zählen nie
+    als Code; ein Verweis mit dem Namen eines Bundle-Merkmals ist nie erlaubt."""
+    files, bundles, marks, seen = set(), set(), set(), 0
     for folder, dirnames, filenames in os.walk(app, followlinks=False):
+        for name in [*dirnames, *filenames]:
+            if name.lower() in BUNDLE_MARKS:
+                if os.path.islink(os.path.join(folder, name)):
+                    raise Rejected("unexpected code in the bundle")
+                marks.add(os.path.relpath(os.path.join(folder, name), app))
         kept = []
         for name in dirnames:
             path = os.path.join(folder, name)
@@ -85,7 +98,7 @@ def found_code(app):
                 continue
             if is_code(path):
                 files.add(os.path.relpath(path, app))
-    return files, bundles
+    return files, bundles, marks
 
 
 def load_manifest(path, tags):
@@ -108,8 +121,15 @@ def load_manifest(path, tags):
                   and (binary is None or isinstance(binary, str) and PLAIN_PATH.fullmatch(binary))
                   and (binary is None) != relative.endswith(BUNDLE_SUFFIXES)
                   and (when is None or isinstance(when, str) and when))
+            shape = None if binary is None or not ok else APP_BINARY.fullmatch(binary) or FRAMEWORK_BINARY.fullmatch(binary)
+            ok = ok and (binary is None or shape)
             if ok and (when is None or when in tags):
-                units.append({"path": relative, "identifier": unit_id, "binary": None if binary is None else f"{relative}/{binary}"})
+                unit = {"path": relative, "identifier": unit_id, "binary": None, "marks": set()}
+                if binary is not None:
+                    unit["binary"] = f"{relative}/{binary}"
+                    plist = "Info.plist" if shape.group(1) == "Contents" else "Resources/Info.plist"
+                    unit["marks"] = {f"{relative}/{shape.group(1)}/{plist}", f"{relative}/{shape.group(1)}/_CodeSignature"}
+                units.append(unit)
         known = {entry.get("when") for entry in code if isinstance(entry, dict)} if ok else set()
         if not ok or any(tag not in known for tag in tags):
             raise ValueError
@@ -134,10 +154,11 @@ def check_layout(app, manifest):
         raise Rejected("bundle description cannot be read") from error
     if named != (manifest["identifier"], manifest["executable"]):
         raise Rejected("bundle description does not match")
-    files, bundles = found_code(app)
+    files, bundles, marks = found_code(app)
     expected_files = {manifest["main"], *[unit["binary"] or unit["path"] for unit in manifest["units"]]}
     expected_bundles = {unit["path"] for unit in manifest["units"] if unit["binary"]}
-    if files - expected_files or bundles - expected_bundles:
+    allowed_marks = {"Contents/Info.plist", "Contents/_CodeSignature"}.union(*[unit["marks"] for unit in manifest["units"]])
+    if files - expected_files or bundles - expected_bundles or marks - allowed_marks:
         raise Rejected("unexpected code in the bundle")
     if expected_files - files or expected_bundles - bundles:
         raise Rejected("expected code missing")
@@ -148,6 +169,29 @@ def run(codesign, arguments):
         return subprocess.run([codesign, *arguments], stdin=subprocess.DEVNULL, capture_output=True, timeout=900)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise Rejected("codesign cannot be run") from error
+
+
+def requirement(identifier, team=None):
+    text = f'identifier "{identifier}"'
+    if team is not None:
+        text = f'anchor apple generic and {text} and certificate leaf[subject.OU] = "{team}"'
+    return f"-R={text}"
+
+
+def describe(codesign, path):
+    """Die Felder der Beschreibung, jedes höchstens einmal. Erst lesen, wenn codesign die Kennung bestätigt hat:
+    Eine Kennung darf Zeilenumbrüche tragen und könnte sonst Felder vortäuschen."""
+    result = run(codesign, ["-dvvv", path])
+    if result.returncode != 0:
+        raise Rejected("signature cannot be read")
+    fields = {}
+    for line in result.stderr.split(b"\n"):
+        for name in FIELDS:
+            if line.startswith(name):
+                if name in fields:
+                    raise Rejected("signature cannot be read")
+                fields[name] = line[len(name):]
+    return fields
 
 
 def read_entitlements(codesign, path):
@@ -169,25 +213,29 @@ def read_entitlements(codesign, path):
 def verify(app, manifest, team, timestamp, codesign):
     if run(codesign, ["--verify", "--strict", "--deep", app]).returncode != 0:
         raise Rejected("signature does not verify")
-    parts = [(unit["binary"] or unit["path"], unit["identifier"], {}) for unit in manifest["units"]]
     rights = {key: True for key in manifest["entitlements"]}
-    parts += [(manifest["main"], manifest["identifier"], rights), ("", manifest["identifier"], rights)]
-    for relative, identifier, expected in parts:
+    parts = [(unit["path"], unit["binary"] or unit["path"], unit["identifier"], {}) for unit in manifest["units"]]
+    parts.append(("", manifest["main"], manifest["identifier"], rights))
+    for relative, executable, identifier, expected in parts:
         path = os.path.join(app, relative) if relative else app
-        result = run(codesign, ["-dvvv", path])
-        if result.returncode != 0:
-            raise Rejected("signature cannot be read")
-        lines = result.stderr.split(b"\n")
-        if b"Identifier=" + identifier.encode() not in lines:
+        if run(codesign, ["--verify", "--strict", requirement(identifier, team), path]).returncode != 0:
+            named = run(codesign, ["--verify", "--strict", requirement(identifier), path]).returncode == 0
+            raise Rejected("unexpected team" if named else "unexpected identifier")
+        fields = describe(codesign, path)
+        if fields.get(b"Identifier=") != identifier.encode():
             raise Rejected("unexpected identifier")
-        if b"TeamIdentifier=" + team.encode() not in lines:
+        if fields.get(b"TeamIdentifier=") != team.encode():
             raise Rejected("unexpected team")
-        if not RUNTIME_FLAG.search(result.stderr):
+        signed = fields.get(b"Executable=")
+        if signed is None or os.path.realpath(os.fsdecode(signed)) != os.path.realpath(os.path.join(app, executable)):
+            raise Rejected("unexpected executable")
+        if not RUNTIME_FLAG.fullmatch(fields.get(b"CodeDirectory ", b"")):
             raise Rejected("hardened runtime missing")
-        if timestamp == "secure" and not any(line.startswith(b"Timestamp=") for line in lines):
+        if timestamp == "secure" and b"Timestamp=" not in fields:
             raise Rejected("secure timestamp missing")
         if read_entitlements(codesign, path) != expected:
             raise Rejected("unexpected entitlements")
+    return len(parts)
 
 
 def resign(app, manifest, identity, timestamp, codesign):
@@ -207,7 +255,6 @@ def resign(app, manifest, identity, timestamp, codesign):
                 raise Rejected("signing failed")
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
-    return len(targets)
 
 
 def parse(argv):
@@ -254,12 +301,16 @@ def main(argv):
     app = os.path.normpath(options["app"])
     try:
         check_layout(app, manifest)
-        signed = 0 if options["verify_only"] else resign(app, manifest, options["identity"], options["timestamp"], options["codesign"])
-        verify(app, manifest, options["team"], options["timestamp"], options["codesign"])
+        if not options["verify_only"]:
+            resign(app, manifest, options["identity"], options["timestamp"], options["codesign"])
+        parts = verify(app, manifest, options["team"], options["timestamp"], options["codesign"])
     except Rejected as error:
         print(f"rejected: {error}", file=sys.stderr)
         return 1
-    print(f"verified: {len(manifest['units']) + 1} parts" if options["verify_only"] else f"resigned and verified: {signed} parts")
+    except Exception:  # nichts aus dem Bundle oder aus codesign erreicht das Protokoll
+        print("rejected: unexpected error", file=sys.stderr)
+        return 1
+    print(f"verified: {parts} parts" if options["verify_only"] else f"resigned and verified: {parts} parts")
     return 0
 
 

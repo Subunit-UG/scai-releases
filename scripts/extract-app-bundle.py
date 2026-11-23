@@ -158,6 +158,9 @@ def main(argv):
     except Rejected as error:
         print(f"rejected: {error}", file=sys.stderr)
         return 1
+    except Exception:  # nichts aus dem Archiv erreicht das Protokoll
+        print("rejected: archive cannot be read", file=sys.stderr)
+        return 1
     print(f"extracted: {files} files, {links} links")
     return 0
 

@@ -269,11 +269,12 @@ jobs:
           mkdir -p "$plain" "$out"
           archive="$plain/SubunitCharge-$EXPECTED_VERSION.zip"
           ditto -c -k --keepParent "$CHARGE_APP" "$archive"
-          node gate/scripts/encrypt-confidential-log.mjs \
-            "$archive" "$out/SubunitCharge-$EXPECTED_VERSION.zip.envelope.json" "$RECIPIENT_PUBLIC_KEY_BASE64"
+          envelope="$out/SubunitCharge-$EXPECTED_VERSION.zip.envelope.json"
+          node gate/scripts/encrypt-confidential-log.mjs "$archive" "$envelope" "$RECIPIENT_PUBLIC_KEY_BASE64" > /dev/null
           rm -rf "$plain"
           printf '{"source_sha":"%s","version":"%s"}\n' "$SOURCE_SHA" "$EXPECTED_VERSION" > "$out/build-receipt.json"
-          echo "PASS charge-envelope (plaintext nur im Umschlag)"
+          # Der Empfaenger gleicht diesen Digest mit der geladenen Datei ab.
+          echo "PASS charge-envelope (sha256=$(shasum -a 256 "$envelope" | cut -d ' ' -f 1), plaintext nur im Umschlag)"
 
       - name: Artefakt hochladen
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, immutable
