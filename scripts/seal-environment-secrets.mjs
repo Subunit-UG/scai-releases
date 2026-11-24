@@ -3,7 +3,8 @@
 //           key (the form the secrets API takes as encrypted_value) and a keyed digest of every value.
 // compare   reads V_<NAME> and reports per name whether its digest equals the recorded one.
 // origin    asks the API for a run and accepts only a completed, successful workflow_dispatch run of the
-//           given workflow file on main of this repository.
+//           given workflow file on main of this repository, in its first attempt: a re-run keeps its id
+//           and would record whatever the job sees by then.
 // selftest  opens a known sealed value and seals and opens fresh ones.
 // The value of the first name keys every digest, so that name must hold a long random value (a
 // certificate or a private key): a digest of a short value cannot be tested against guesses without it.
@@ -73,7 +74,7 @@ export function compareAll(names, env, recorded) {
 export function isSealRun(run, repository, workflowPath) {
   if (typeof repository !== "string" || repository === "" || typeof workflowPath !== "string" || workflowPath === "") return false;
   return run?.path === workflowPath && run.event === "workflow_dispatch" && run.head_branch === "main"
-    && run.status === "completed" && run.conclusion === "success"
+    && run.status === "completed" && run.conclusion === "success" && run.run_attempt === 1
     && run.repository?.full_name === repository && run.head_repository?.full_name === repository;
 }
 
@@ -95,6 +96,7 @@ export const KNOWN = {
 
 export function selftest() {
   const hex = (text) => Buffer.from(text, "hex");
+  if (typeof fetch !== "function") return false;
   const known = open(hex(KNOWN.sealed), hex(KNOWN.publicKey), createHash("sha256").update(KNOWN.label).digest());
   if (known.toString("utf8") !== KNOWN.message) return false;
   const pair = generateKeyPairSync("x25519");

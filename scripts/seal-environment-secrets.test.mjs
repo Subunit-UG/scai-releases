@@ -204,11 +204,12 @@ const SEAL_RUN = {
   head_branch: "main",
   status: "completed",
   conclusion: "success",
+  run_attempt: 1,
   repository: { full_name: "owner/name" },
   head_repository: { full_name: "owner/name" },
 };
 
-test("isSealRun: nur ein abgeschlossener, erfolgreicher Lauf dieser Datei auf main dieses Repos", () => {
+test("isSealRun: nur ein abgeschlossener, erfolgreicher Lauf dieser Datei auf main dieses Repos, im ersten Versuch", () => {
   assert.equal(isSealRun(SEAL_RUN, "owner/name", WORKFLOW), true);
   for (const change of [
     { path: ".github/workflows/other.yml" },
@@ -218,6 +219,9 @@ test("isSealRun: nur ein abgeschlossener, erfolgreicher Lauf dieser Datei auf ma
     { status: "in_progress" },
     { conclusion: "failure" },
     { conclusion: null },
+    { run_attempt: 2 },
+    { run_attempt: "1" },
+    { run_attempt: undefined },
     { repository: { full_name: "other/name" } },
     { head_repository: { full_name: "fork/name" } },
     { head_repository: null },
