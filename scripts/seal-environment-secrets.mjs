@@ -1,22 +1,37 @@
 #!/usr/bin/env node
 // seal      reads V_<NAME> from the environment and writes two files: every value sealed for a public
-//           key (the form the secrets API takes as encrypted_value) and a SHA-256 digest of every value.
+//           key (the form the secrets API takes as encrypted_value) and a keyed digest of every value.
 // compare   reads V_<NAME> and reports per name whether its digest equals the recorded one.
 // selftest  opens a known sealed value and seals and opens fresh ones.
+// The value of the first name keys every digest, so that name must hold a long random value (a
+// certificate or a private key): a digest of a short value cannot be tested against guesses without it.
+// A fresh salt per seal makes the digests of two runs differ.
 // Nothing derived from a value is printed: output is names and one word per name.
-import { createHash, generateKeyPairSync, randomBytes } from "node:crypto";
+import { createHash, createHmac, generateKeyPairSync, randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { open, seal } from "./sealed-box.mjs";
 
 const NAME = /^[A-Z][A-Z0-9_]*$/;
-const digest = (value) => createHash("sha256").update(Buffer.from(value, "utf8")).digest("hex");
+const KEY_SOURCE_MIN = 256;
+const hmac = (key, ...parts) => parts.reduce((mac, part) => mac.update(part), createHmac("sha256", key)).digest();
 
+// A value that does not decode as text arrives with replacement characters; sealing it would store
+// different bytes than the original while both sides still agree on the digest.
 function valuesOf(names, env) {
   if (names.length === 0 || new Set(names).size !== names.length || !names.every((name) => NAME.test(name))) {
     throw new Error("names must be unique and well-formed");
   }
-  return names.map((name) => [name, env[`V_${name}`] ?? ""]);
+  return names.map((name) => {
+    const value = env[`V_${name}`] ?? "";
+    if (value.includes("�")) throw new Error(`value is not clean text: ${name}`);
+    return [name, value];
+  });
+}
+
+function digester(salt, keySource) {
+  const key = hmac(salt, Buffer.from(keySource, "utf8"));
+  return (name, value) => hmac(key, `${name}\0`, Buffer.from(value, "utf8")).toString("hex");
 }
 
 export function sealAll(names, env, publicKeyBase64, keyId) {
@@ -26,19 +41,29 @@ export function sealAll(names, env, publicKeyBase64, keyId) {
   const values = valuesOf(names, env);
   const missing = values.filter(([, value]) => value === "").map(([name]) => name);
   if (missing.length > 0) return { missing };
+  if (values[0][1].length < KEY_SOURCE_MIN) throw new Error("the first name must hold a long value");
+  const salt = randomBytes(32);
+  const digestOf = digester(salt, values[0][1]);
   return {
     missing,
     sealed: { key_id: keyId, secrets: Object.fromEntries(values.map(([name, value]) => [name, seal(Buffer.from(value, "utf8"), publicKey).toString("base64")])) },
-    digests: { digests: Object.fromEntries(values.map(([name, value]) => [name, digest(value)])) },
+    digests: { salt: salt.toString("hex"), digests: Object.fromEntries(values.map(([name, value]) => [name, digestOf(name, value)])) },
   };
 }
 
+// Without the recorded value of the first name there is no key, so the other names stay undetermined.
 export function compareAll(names, env, recorded) {
   const expected = recorded?.digests ?? {};
-  const lines = valuesOf(names, env).map(([name, value]) => {
+  const salt = /^[0-9a-f]{64}$/.test(recorded?.salt ?? "") ? Buffer.from(recorded.salt, "hex") : null;
+  const values = valuesOf(names, env);
+  const [sourceName, source] = values[0];
+  const digestOf = salt !== null && source !== "" ? digester(salt, source) : null;
+  const sourceEqual = digestOf !== null && typeof expected[sourceName] === "string" && digestOf(sourceName, source) === expected[sourceName];
+  const lines = values.map(([name, value], index) => {
     if (value === "") return `missing: ${name}`;
-    if (typeof expected[name] !== "string") return `not recorded: ${name}`;
-    return `${digest(value) === expected[name] ? "equal" : "differs"}: ${name}`;
+    if (salt === null || typeof expected[name] !== "string") return `not recorded: ${name}`;
+    if (index > 0 && !sourceEqual) return `undetermined: ${name}`;
+    return `${digestOf(name, value) === expected[name] ? "equal" : "differs"}: ${name}`;
   });
   return { lines, equal: lines.every((line) => line.startsWith("equal: ")) };
 }
