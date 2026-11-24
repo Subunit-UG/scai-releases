@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { createHash, createHmac, generateKeyPairSync, randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { blake2b, open, seal } from "./sealed-box.mjs";
-import { compareAll, KNOWN, sealAll, selftest } from "./seal-environment-secrets.mjs";
+import { compareAll, isSealRun, KNOWN, sealAll, selftest } from "./seal-environment-secrets.mjs";
 
 const TOOL = join(dirname(fileURLToPath(import.meta.url)), "seal-environment-secrets.mjs");
 const hex = (text) => Buffer.from(text, "hex");
@@ -142,17 +143,9 @@ test("release-environment-secrets.yml: dieselben Namen in NAMES und in beiden Jo
   const compare = jobs[1];
   const origin = compare.slice(compare.indexOf("Check the origin of the seal run"), compare.indexOf("Download the envelopes"));
   assert.ok(compare.indexOf("Check the run id") < compare.indexOf("Check the origin of the seal run"));
-  for (const condition of [
-    '.path == ".github/workflows/release-environment-secrets.yml"',
-    '.event == "workflow_dispatch"',
-    '.head_branch == "main"',
-    '.status == "completed"',
-    '.conclusion == "success"',
-    ".repository.full_name == $repo",
-    ".head_repository.full_name == $repo",
-  ]) assert.ok(origin.includes(`${condition}\n`), condition);
+  assert.ok(origin.includes('node scripts/seal-environment-secrets.mjs origin "$SEAL_RUN_ID" ".github/workflows/release-environment-secrets.yml" || {\n'));
+  assert.ok(origin.includes("RUN_LOOKUP_TOKEN: ${{ github.token }}\n"));
   assert.equal(origin.includes("{{ secrets."), false);
-  assert.equal(/gh secret|GH_TOKEN|RELEASE_ENV_MIGRATION_TOKEN/.test(text), false);
 });
 
 test("Aufruf: Dateien nur bei vollständigen Werten, kein Wert in der Ausgabe", () => {
@@ -201,5 +194,66 @@ test("Aufruf: Dateien nur bei vollständigen Werten, kein Wert in der Ausgabe", 
     assert.equal(run(["compare", join(dir, "fehlt.json"), "ONE"], { V_ONE: "x" }).status, 1);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+const WORKFLOW = ".github/workflows/release-environment-secrets.yml";
+const SEAL_RUN = {
+  path: WORKFLOW,
+  event: "workflow_dispatch",
+  head_branch: "main",
+  status: "completed",
+  conclusion: "success",
+  repository: { full_name: "owner/name" },
+  head_repository: { full_name: "owner/name" },
+};
+
+test("isSealRun: nur ein abgeschlossener, erfolgreicher Lauf dieser Datei auf main dieses Repos", () => {
+  assert.equal(isSealRun(SEAL_RUN, "owner/name", WORKFLOW), true);
+  for (const change of [
+    { path: ".github/workflows/other.yml" },
+    { path: `${WORKFLOW}@main` },
+    { event: "pull_request" },
+    { head_branch: "other" },
+    { status: "in_progress" },
+    { conclusion: "failure" },
+    { conclusion: null },
+    { repository: { full_name: "other/name" } },
+    { head_repository: { full_name: "fork/name" } },
+    { head_repository: null },
+  ]) assert.equal(isSealRun({ ...SEAL_RUN, ...change }, "owner/name", WORKFLOW), false, JSON.stringify(change));
+  assert.equal(isSealRun({}, "owner/name", WORKFLOW), false);
+  assert.equal(isSealRun(null, "owner/name", WORKFLOW), false);
+  assert.equal(isSealRun({ ...SEAL_RUN, repository: {}, head_repository: {} }, undefined, WORKFLOW), false);
+});
+
+test("Aufruf origin: fragt genau den Lauf dieses Repos ab und nimmt nur einen passenden an", async () => {
+  const seen = [];
+  const server = createServer((request, response) => {
+    seen.push([request.url, request.headers.authorization, request.headers.accept]);
+    if (request.url.endsWith("/404")) {
+      response.writeHead(404).end("{}");
+      return;
+    }
+    const run = request.url.endsWith("/2") ? { ...SEAL_RUN, event: "pull_request" } : SEAL_RUN;
+    response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(run));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const env = { PATH: process.env.PATH, GITHUB_API_URL: `http://127.0.0.1:${server.address().port}`, GITHUB_REPOSITORY: "owner/name", RUN_LOOKUP_TOKEN: "lookup" };
+  const run = (...args) => new Promise((resolve) => {
+    execFile(process.execPath, [TOOL, "origin", ...args], { env }, (error, stdout, stderr) => resolve({ status: error ? error.code : 0, stdout, stderr }));
+  });
+  try {
+    assert.deepEqual(await run("1", WORKFLOW), { status: 0, stdout: "origin accepted\n", stderr: "" });
+    assert.deepEqual(seen[0], ["/repos/owner/name/actions/runs/1", "Bearer lookup", "application/vnd.github+json"]);
+    assert.deepEqual(await run("2", WORKFLOW), { status: 1, stdout: "origin rejected\n", stderr: "" });
+    assert.deepEqual(await run("1", ".github/workflows/other.yml"), { status: 1, stdout: "origin rejected\n", stderr: "" });
+    assert.deepEqual(await run("404", WORKFLOW), { status: 1, stdout: "origin rejected\n", stderr: "" });
+    const count = seen.length;
+    assert.deepEqual(await run("1/../../x", WORKFLOW), { status: 1, stdout: "", stderr: "failed: run id must be a number\n" });
+    assert.equal(seen.length, count);
+    assert.equal((await run("1")).status, 64);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
   }
 });

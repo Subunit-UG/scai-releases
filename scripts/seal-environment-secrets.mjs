@@ -2,6 +2,8 @@
 // seal      reads V_<NAME> from the environment and writes two files: every value sealed for a public
 //           key (the form the secrets API takes as encrypted_value) and a keyed digest of every value.
 // compare   reads V_<NAME> and reports per name whether its digest equals the recorded one.
+// origin    asks the API for a run and accepts only a completed, successful workflow_dispatch run of the
+//           given workflow file on main of this repository.
 // selftest  opens a known sealed value and seals and opens fresh ones.
 // The value of the first name keys every digest, so that name must hold a long random value (a
 // certificate or a private key): a digest of a short value cannot be tested against guesses without it.
@@ -68,6 +70,21 @@ export function compareAll(names, env, recorded) {
   return { lines, equal: lines.every((line) => line.startsWith("equal: ")) };
 }
 
+export function isSealRun(run, repository, workflowPath) {
+  if (typeof repository !== "string" || repository === "" || typeof workflowPath !== "string" || workflowPath === "") return false;
+  return run?.path === workflowPath && run.event === "workflow_dispatch" && run.head_branch === "main"
+    && run.status === "completed" && run.conclusion === "success"
+    && run.repository?.full_name === repository && run.head_repository?.full_name === repository;
+}
+
+async function originOf(runId, workflowPath, env) {
+  if (!/^[0-9]{1,20}$/.test(runId)) throw new Error("run id must be a number");
+  const response = await fetch(`${env.GITHUB_API_URL}/repos/${env.GITHUB_REPOSITORY}/actions/runs/${runId}`, {
+    headers: { accept: "application/vnd.github+json", authorization: `Bearer ${env.RUN_LOOKUP_TOKEN}` },
+  });
+  return response.ok && isSealRun(await response.json(), env.GITHUB_REPOSITORY, workflowPath);
+}
+
 // A value sealed with libsodium for the test key pair whose private half is the SHA-256 of KNOWN.label.
 export const KNOWN = {
   label: "sealed-box self-test",
@@ -89,7 +106,7 @@ export function selftest() {
   });
 }
 
-function main([mode, ...rest], env) {
+async function main([mode, ...rest], env) {
   if (mode === "selftest" && rest.length === 0) {
     if (!selftest()) throw new Error("self-test failed");
     console.log("self-test passed");
@@ -113,13 +130,18 @@ function main([mode, ...rest], env) {
     for (const line of result.lines) console.log(line);
     return result.equal ? 0 : 1;
   }
-  console.error("usage: seal-environment-secrets.mjs selftest | seal <sealed.json> <digests.json> <public-key-base64> <key-id> NAME... | compare <digests.json> NAME...");
+  if (mode === "origin" && rest.length === 2) {
+    const accepted = await originOf(rest[0], rest[1], env);
+    console.log(accepted ? "origin accepted" : "origin rejected");
+    return accepted ? 0 : 1;
+  }
+  console.error("usage: seal-environment-secrets.mjs selftest | seal <sealed.json> <digests.json> <public-key-base64> <key-id> NAME... | compare <digests.json> NAME... | origin <run-id> <workflow-path>");
   return 64;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    process.exitCode = main(process.argv.slice(2), process.env);
+    process.exitCode = await main(process.argv.slice(2), process.env);
   } catch (error) {
     console.error(`failed: ${error.message}`);
     process.exitCode = 1;
