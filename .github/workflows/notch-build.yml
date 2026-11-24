@@ -323,7 +323,9 @@ jobs:
           fi
           xcrun stapler staple "$app" > /dev/null
           xcrun stapler validate "$app" > /dev/null
-          spctl --assess --type execute -vv "$app" 2>&1 | grep -q 'source=Notarized Developer ID' || {
+          # Ausgabe erst vollstaendig lesen, dann durchsuchen.
+          assessment=$(spctl --assess --type execute -vv "$app" 2>&1) || assessment=""
+          grep -q 'source=Notarized Developer ID' <<<"$assessment" || {
             echo "::error::Gatekeeper erkennt das Bundle nicht als notarisiert."
             exit 1
           }
