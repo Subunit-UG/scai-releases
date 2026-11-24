@@ -89,6 +89,9 @@ export function signedBuildErrors(name, text) {
   need(!/uses: (?!actions\/(checkout|upload-artifact|download-artifact|create-github-app-token)@)/.test(text), "only the known actions");
   need(!/actions\/cache|gh release|softprops|codesign|preserve-metadata|--allow-entitlement|--codesign/.test(text), "no cache, no publication, no direct signing call");
 
+  // grep -q endet beim ersten Treffer; schreibt das Programm davor noch, bricht es ab und der Treffer zaehlt als Fehlschlag.
+  need(!/\|\s*grep\s+(?:-[A-Za-z]*q|--quiet)/.test(text), "no search with grep -q behind a pipe");
+
   // Bau-Job: nur Quellzugang, keine Umgebung, keine Signier-Identitaet.
   need(same(secretsOf(build), spec.buildSecrets), "build job: only the source-access secrets");
   need(!/^\s+environment:/m.test(build), "build job: no environment");

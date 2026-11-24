@@ -130,6 +130,7 @@ const MUTATIONS = {
   "dritter Job mit Signier-Geheimnis und Quelltext": (t) => `${t}\n  extra:\n    runs-on: macos-latest\n    environment: release\n    steps:\n      - env:\n          X: \${{ secrets.APPLE_CERTIFICATE }}\n        run: bash gate/scripts/run-confidential.sh x ./build.sh\n`,
   "Arbeitsordner wird hochgeladen": (t) => intoSign(t, "      - name: Zusatz\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: x\n          path: ${{ runner.temp }}/handover\n"),
   "Version aus dem Bundle im Protokoll": (t) => intoSign(t, "      - name: Zusatz\n        run: echo \"gelesen: $version\"\n"),
+  "Suche mit grep -q hinter einer Leitung": (t) => intoSign(t, "      - name: Zusatz\n        run: spctl --assess -vv \"$app\" 2>&1 | grep -q accepted\n"),
   "Geheimnis auf Workflow-Ebene": (t) => swap(t, "\nenv:\n", "\nenv:\n  X: ${{ secrets.APPLE_CERTIFICATE }}\n"),
 };
 for (const name of Object.keys(SIGNED_BUILDS)) {
