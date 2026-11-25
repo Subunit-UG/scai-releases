@@ -52,8 +52,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends poppler-utils libjpeg-turbo-progs pngcheck jq
+          bash "$GITHUB_WORKSPACE/gate/scripts/apt-bundle.sh" install pdf-image-tools-ubuntu-24.04 \
+            f201d2410479bffeba007eca20772e24e1511973bdb0677c24a1d1040525cc28 poppler-utils libjpeg-turbo-progs pngcheck jq
           command -v pdfinfo
           command -v djpeg
           command -v pngcheck
