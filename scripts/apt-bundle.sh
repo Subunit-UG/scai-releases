@@ -15,6 +15,10 @@ mode="${1:-}"; name="${2:-}"
 [[ "$name" =~ ^[a-z0-9][a-z0-9.-]{0,63}$ ]] || { echo "apt-bundle: invalid bundle name" >&2; exit 2; }
 
 APT_OPTS=(-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20)
+# APT_BUNDLE_RECOMMENDS=1 keeps apt's default of installing recommended packages, for
+# callers that used plain "apt-get install" (same package set in bundle and fallback).
+REC=(--no-install-recommends)
+[[ "${APT_BUNDLE_RECOMMENDS:-0}" == 1 ]] && REC=()
 BUNDLE_URL_BASE="${APT_BUNDLE_URL_BASE:-https://github.com/${GITHUB_REPOSITORY:-Subunit-UG/scai-releases}/releases/download/apt-bundles}"
 
 installed() {
@@ -27,7 +31,7 @@ installed() {
 from_apt() {
   echo "apt-bundle: installing from apt: $*"
   sudo apt-get "${APT_OPTS[@]}" update -qq
-  sudo apt-get "${APT_OPTS[@]}" install -y --no-install-recommends "$@"
+  sudo apt-get "${APT_OPTS[@]}" install -y "${REC[@]}" "$@"
 }
 
 case "$mode" in
@@ -38,7 +42,7 @@ case "$mode" in
     mkdir -p "$work/debs/partial"
     sudo apt-get "${APT_OPTS[@]}" update -qq
     # Only what this runner image lacks: exactly the debs an identical image needs.
-    sudo apt-get "${APT_OPTS[@]}" install -y --no-install-recommends --download-only \
+    sudo apt-get "${APT_OPTS[@]}" install -y "${REC[@]}" --download-only \
       -o Dir::Cache::archives="$work/debs" "$@"
     sudo chown -R "$(id -u):$(id -g)" "$work/debs"
     rm -rf "$work/debs/partial" "$work/debs/lock"
