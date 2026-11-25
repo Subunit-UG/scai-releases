@@ -34,7 +34,8 @@ test("the bundle is only ever installed after its sha256 matched the pin", () =>
   const check = src.indexOf('[[ "$got" == "$want" ]]');
   const dpkg = src.indexOf("sudo dpkg -i");
   assert.ok(check > 0 && dpkg > check, "dpkg runs only inside the matched-sha branch");
-  assert.match(src, /sha256sum -c --quiet SHA256SUMS\) && sudo dpkg -i/);
+  assert.ok(src.includes('sha256sum -c --quiet SHA256SUMS) && { ((${#new[@]} == 0)) || sudo dpkg -i "${new[@]}"'));
+  assert.ok(src.includes('installed "$pkg" || new+=("$deb")'), "already installed packages are never replaced");
 });
 
 test("refresh workflow is manual, passes inputs via env and pins its actions", () => {

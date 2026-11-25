@@ -60,7 +60,14 @@ case "$mode" in
       got="$(sha256sum "$work/b.tar" | cut -d' ' -f1)"
       if [[ "$got" == "$want" ]]; then
         tar -C "$work" -xf "$work/b.tar"
-        if (cd "$work/debs" && sha256sum -c --quiet SHA256SUMS) && sudo dpkg -i "$work"/debs/*.deb >/dev/null; then
+        # Never replace what the runner image already has (no downgrades): only debs for
+        # packages that are not installed at all; anything that then does not fit -> apt.
+        new=()
+        for deb in "$work"/debs/*.deb; do
+          pkg="$(dpkg-deb -f "$deb" Package)"
+          installed "$pkg" || new+=("$deb")
+        done
+        if (cd "$work/debs" && sha256sum -c --quiet SHA256SUMS) && { ((${#new[@]} == 0)) || sudo dpkg -i "${new[@]}" >/dev/null; }; then
           ok=1
         else
           echo "apt-bundle: bundle does not install on this image" >&2
