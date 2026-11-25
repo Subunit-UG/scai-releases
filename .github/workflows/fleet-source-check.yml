@@ -158,9 +158,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client poppler-utils tesseract-ocr \
-            tesseract-ocr-deu tesseract-ocr-eng fonts-dejavu-core fonts-ipafont-gothic
+          APT_BUNDLE_RECOMMENDS=1 bash "$GITHUB_WORKSPACE/gate/scripts/apt-bundle.sh" install ocr-db-tools-ubuntu-24.04 \
+            f444db1b681ba28d7acfbc2711e4be6d987ec37565d174c752821c242eb6f957 \
+            postgresql-client poppler-utils tesseract-ocr tesseract-ocr-deu tesseract-ocr-eng fonts-dejavu-core fonts-ipafont-gothic
           PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d postgres \
             -v ON_ERROR_STOP=1 -c 'CREATE DATABASE memory_ci'
 
