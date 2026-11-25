@@ -44,3 +44,10 @@ test("refresh workflow is manual, passes inputs via env and pins its actions", (
   assert.doesNotMatch(wf, /run: \|[\s\S]*\$\{\{ inputs\.bundle \}\}[\s\S]*?\n\s+- /, "inputs only via env");
   for (const uses of wf.match(/uses: \S+/g) ?? []) assert.match(uses, /@[0-9a-f]{40}$/, uses);
 });
+
+test("recommends follow the caller: off by default, on with APT_BUNDLE_RECOMMENDS=1", () => {
+  const src = readFileSync(script, "utf8");
+  assert.match(src, /REC=\(--no-install-recommends\)/);
+  assert.match(src, /\[\[ "\$\{APT_BUNDLE_RECOMMENDS:-0\}" == 1 \]\] && REC=\(\)/);
+  assert.equal((src.match(/install -y "\$\{REC\[@\]\}"/g) ?? []).length, 2, "bundle build and apt fallback use the same set");
+});

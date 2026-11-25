@@ -12,6 +12,9 @@ on:
         type: choice
         options:
           - ffmpeg-ubuntu-24.04
+          - postgresql-client-ubuntu-24.04
+          - ocr-db-tools-ubuntu-24.04
+          - pdf-image-tools-ubuntu-24.04
 
 permissions:
   contents: read
@@ -35,6 +38,10 @@ jobs:
           set -euo pipefail
           case "$BUNDLE" in
             ffmpeg-ubuntu-24.04) pkgs=(ffmpeg) ;;
+            postgresql-client-ubuntu-24.04) export APT_BUNDLE_RECOMMENDS=1; pkgs=(postgresql-client) ;;
+            ocr-db-tools-ubuntu-24.04) export APT_BUNDLE_RECOMMENDS=1
+              pkgs=(postgresql-client poppler-utils tesseract-ocr tesseract-ocr-deu tesseract-ocr-eng fonts-dejavu-core fonts-ipafont-gothic) ;;
+            pdf-image-tools-ubuntu-24.04) pkgs=(poppler-utils libjpeg-turbo-progs pngcheck jq) ;;
             *) echo "unknown bundle" >&2; exit 2 ;;
           esac
           bash scripts/apt-bundle.sh build "$BUNDLE" "${pkgs[@]}" | tee sha.txt
