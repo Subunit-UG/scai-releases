@@ -59,8 +59,9 @@ jobs:
         # Keep the fallback runner aligned with the private server-contracts
         # workflow: JWT/HTTP/API tests must run, not fail on missing imports.
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg
+          # ffmpeg from the pinned bundle (scripts/apt-bundle.sh); apt only as fallback.
+          bash "$GITHUB_WORKSPACE/gate/scripts/apt-bundle.sh" install ffmpeg-ubuntu-24.04 \
+            a32b64b7a0e89258824a50dad7a3011204c240951843574e1d48e48ab7a073fc ffmpeg
           bash "$GITHUB_WORKSPACE/gate/scripts/run-confidential.sh" echo-install \
             python -m pip install -c server/runtime-security-constraints.txt \
             "numpy==1.26.4" "cryptography==50.0.2" "pyOpenSSL==26.4.0" \
