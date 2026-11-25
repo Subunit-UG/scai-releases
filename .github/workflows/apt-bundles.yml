@@ -1,0 +1,53 @@
+name: Refresh apt bundles
+
+# Builds the pinned .deb bundles that the PR-check workflows install instead of
+# using the apt mirror (scripts/apt-bundle.sh). Run manually after a runner
+# image update; then pin the printed SHA-256 in the calling workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      bundle:
+        description: "Bundle to rebuild"
+        required: true
+        type: choice
+        options:
+          - ffmpeg-ubuntu-24.04
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2, immutable
+        with:
+          persist-credentials: false
+
+      - name: Build bundle
+        shell: bash
+        env:
+          BUNDLE: ${{ inputs.bundle }}
+        run: |
+          set -euo pipefail
+          case "$BUNDLE" in
+            ffmpeg-ubuntu-24.04) pkgs=(ffmpeg) ;;
+            *) echo "unknown bundle" >&2; exit 2 ;;
+          esac
+          bash scripts/apt-bundle.sh build "$BUNDLE" "${pkgs[@]}" | tee sha.txt
+
+      - name: Publish as release asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE: ${{ inputs.bundle }}
+        run: |
+          set -euo pipefail
+          gh release view apt-bundles >/dev/null 2>&1 || \
+            gh release create apt-bundles --title "apt bundles" --notes "Pinned .deb bundles for CI (scripts/apt-bundle.sh)." --latest=false
+          gh release upload apt-bundles "$BUNDLE.tar" --clobber
+          echo "Pin this SHA-256 in the calling workflow:"
+          cat sha.txt
